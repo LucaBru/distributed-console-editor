@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+option go_package = "/editor";
+
+service Editor {
+  rpc FetchUpdates(FetchUpdatesReq) returns (FetchUpdatesReply) {}
+  rpc PushOps(Ops) returns (PushOpsReply) {}
+}
+
+message FetchUpdatesReq {}
+message FetchUpdatesReply {}
+message Ops {}
+message PushOpsReply {}
+
+/* message Op {
+  int32 n = 1;
+  string s = 2;
+} */

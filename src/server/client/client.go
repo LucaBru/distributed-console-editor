@@ -31,11 +31,18 @@ func main() {
 	}
 	defer conn.Close()
 	client := editorpb.NewNodeClient(conn)
-	msg, err := client.Share(context.Background(), &editorpb.ShareReq{DocName: "Example", Doc: []byte{}, UserId: "user@mail.com"})
+	msg, err := client.Share(context.Background(), &editorpb.ShareReq{DocName: "Hello", Doc: []byte("Hello"), UserId: "user@mail.com"})
 	if err != nil {
 		log.Fatalln("Error from the server %s", err)
 	}
 	log.Println("Successfully added new shared doc %s", msg.DocId)
+
+	ops := []*editorpb.Op{&editorpb.Op{N: 5}, &editorpb.Op{N: 0, S: " World!"}}
+	_, err = client.Edit(context.Background(), &editorpb.EditReq{DocId: msg.DocId, Rev: 0, Ops: ops, UserId: "user@mail.com"})
+	if err != nil {
+		log.Fatalln("Error from the server %s", err)
+	}
+	log.Println("Successfully updated shared doc %s", msg.DocId)
 
 	_, err = client.Delete(context.Background(), &editorpb.DeleteReq{DocId: msg.DocId, UserId: "user@mail.com"})
 	if err != nil {

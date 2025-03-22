@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	pb "editor-service/protos"
-	service "editor-service/src"
+	"editor-service/node"
+	"editor-service/protos/editorpb"
 	"flag"
 	"fmt"
 	"log"
@@ -46,14 +46,15 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	wt := &service.Document{}
+	state := node.NewState()
 
-	r, tm, err := NewRaft(ctx, *raftId, *myAddr, wt)
+	r, tm, err := NewRaft(ctx, *raftId, *myAddr, state)
+	log.Println("New raft node created")
 	if err != nil {
 		log.Fatalf("failed to start raft: %v", err)
 	}
 	s := grpc.NewServer()
-	pb.RegisterEditorServer(s, service.NewEditor(r))
+	editorpb.RegisterNodeServer(s, node.NewNode(r))
 	tm.Register(s)
 	leaderhealth.Setup(r, s, []string{"Example"})
 	raftadmin.Register(s, r)

@@ -1,18 +1,35 @@
 syntax = "proto3";
 
-option go_package = "/editor";
+package editor;
 
-service Editor {
-  rpc FetchUpdates(FetchUpdatesReq) returns (FetchUpdatesReply) {}
-  rpc PushOps(Ops) returns (PushOpsReply) {}
+option go_package = "editor-service/protos/editorpb";
+
+service Node {
+  rpc Share(ShareReq) returns (ShareReply) {}
+  rpc Delete(DeleteReq) returns (DeleteReply) {}
+  // rpc Recv(stream EditCmd) returns (stream Update) {}
+  rpc Edit(EditReq) returns (Ack) {}
 }
 
-message FetchUpdatesReq {}
-message FetchUpdatesReply {}
-message Ops {}
-message PushOpsReply {}
+message ShareReq {
+  string doc_name = 1;
+  bytes doc = 2;
+  string user_id = 3;
+}
+message ShareReply { string doc_id = 1; }
 
-/* message Op {
+message DeleteReq {}
+message DeleteReply {}
+
+message EditReq {
+  string doc_id = 1;
+  int32 rev = 2;
+  repeated Op ops = 3;
+}
+
+message Ack {}
+
+message Op {
   int32 n = 1;
   string s = 2;
-} */
+}

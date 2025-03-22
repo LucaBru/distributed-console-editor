@@ -12,6 +12,8 @@ rm -rf /tmp/my-raft-cluster
 mkdir /tmp/my-raft-cluster
 mkdir /tmp/my-raft-cluster/node{A,B,C}
 
+clear
+
 go run . --raft_bootstrap --raft_id=nodeA --address=localhost:50051 --raft_data_dir /tmp/my-raft-cluster &
 go run . --raft_id=nodeB --address=localhost:50052 --raft_data_dir /tmp/my-raft-cluster &
 go run . --raft_id=nodeC --address=localhost:50053 --raft_data_dir /tmp/my-raft-cluster &
@@ -25,8 +27,4 @@ sleep 2
 
 echo -e "\nCluster is online 🚀🚀"
 
-echo -e "\nRequiring a leadership transfer"
-raftadmin localhost:50051 leader
-raftadmin --leader multi:///localhost:50051,localhost:50052,localhost:50053 leadership_transfer
-echo -e "\nNew leader"
-raftadmin localhost:50051 leader
+wait

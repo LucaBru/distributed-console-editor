@@ -18,13 +18,18 @@ message ShareReq {
 }
 message ShareReply { string doc_id = 1; }
 
-message DeleteReq {}
+message DeleteReq {
+  string doc_id = 1;
+  string user_id = 2;
+}
+
 message DeleteReply {}
 
 message EditReq {
   string doc_id = 1;
   int32 rev = 2;
   repeated Op ops = 3;
+  string user_id = 4;
 }
 
 message Ack {}

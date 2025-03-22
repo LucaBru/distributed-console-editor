@@ -55,3 +55,20 @@ func (n *Node) Delete(ctx context.Context, req *editorpb.DeleteReq) (*editorpb.D
 	}
 	return &editorpb.DeleteReply{}, nil
 }
+
+func (n *Node) Edit(ctx context.Context, req *editorpb.EditReq) (*editorpb.Ack, error) {
+	entry := &logpb.Log{Cmd: &logpb.Log_Edit{Edit: &logpb.Edit{DocId: req.DocId, Rev: req.Rev, Ops: req.Ops, UserId: req.UserId}}}
+	b, err := proto.Marshal(entry)
+	if err != nil {
+		return nil, &serror.InternalError{Err: fmt.Errorf("Failed to marshal the request: %w", err)}
+	}
+	f := n.Raft.Apply(b, time.Second)
+	if err := f.Error(); err != nil {
+		return nil, rafterrors.MarkRetriable(&serror.InternalError{Err: err})
+	}
+	err, ok := f.Response().(error)
+	if ok {
+		return nil, err
+	}
+	return &editorpb.Ack{}, nil
+}

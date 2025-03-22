@@ -11,11 +11,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Jille/raft-grpc-leader-rpc/leaderhealth"
+	leaderHealth "github.com/Jille/raft-grpc-leader-rpc/leaderhealth"
 	transport "github.com/Jille/raft-grpc-transport"
-	"github.com/Jille/raftadmin"
+	raftAdmin "github.com/Jille/raftadmin"
 	"github.com/hashicorp/raft"
-	boltdb "github.com/hashicorp/raft-boltdb"
+	boltDb "github.com/hashicorp/raft-boltdb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
@@ -37,29 +37,28 @@ func main() {
 	}
 
 	ctx := context.Background()
-	_, port, err := net.SplitHostPort(*myAddr)
-	if err != nil {
-		log.Fatalf("failed to parse local address (%q): %v", *myAddr, err)
+	_, port, error := net.SplitHostPort(*myAddr)
+	if error != nil {
+		log.Fatalf("failed to parse local address (%q): %v", *myAddr, error)
 	}
-	sock, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+	sock, error := net.Listen("tcp", fmt.Sprintf(":%s", port))
+	if error != nil {
+		log.Fatalf("failed to listen: %v", error)
 	}
 
 	state := node.NewState()
 
-	r, tm, err := NewRaft(ctx, *raftId, *myAddr, state)
-	log.Println("New raft node created")
-	if err != nil {
-		log.Fatalf("failed to start raft: %v", err)
+	raft, transportManager, error := NewRaft(ctx, *raftId, *myAddr, wt)
+	if error != nil {
+		log.Fatalf("failed to start raft: %v", error)
 	}
-	s := grpc.NewServer()
-	editorpb.RegisterNodeServer(s, node.NewNode(r))
-	tm.Register(s)
-	leaderhealth.Setup(r, s, []string{"Example"})
-	raftadmin.Register(s, r)
-	reflection.Register(s)
-	if err := s.Serve(sock); err != nil {
+	server := grpc.NewServer()
+	pb.RegisterEditorServer(server, service.NewEditor(raft))
+	transportManager.Register(server)
+	leaderHealth.Setup(raft, server, []string{"Example"})
+	raftAdmin.Register(server, raft)
+	reflection.Register(server)
+	if err := server.Serve(sock); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
 }
@@ -70,24 +69,24 @@ func NewRaft(ctx context.Context, myID, myAddress string, fsm raft.FSM) (*raft.R
 
 	baseDir := filepath.Join(*raftDir, myID)
 
-	ldb, err := boltdb.NewBoltStore(filepath.Join(baseDir, "logs.dat"))
+	ldb, err := boltDb.NewBoltStore(filepath.Join(baseDir, "logs.dat"))
 	if err != nil {
 		return nil, nil, fmt.Errorf(`boltdb.NewBoltStore(%q): %v`, filepath.Join(baseDir, "logs.dat"), err)
 	}
 
-	sdb, err := boltdb.NewBoltStore(filepath.Join(baseDir, "stable.dat"))
+	sdb, err := boltDb.NewBoltStore(filepath.Join(baseDir, "stable.dat"))
 	if err != nil {
 		return nil, nil, fmt.Errorf(`boltdb.NewBoltStore(%q): %v`, filepath.Join(baseDir, "stable.dat"), err)
 	}
 
-	fss, err := raft.NewFileSnapshotStore(baseDir, 3, os.Stderr)
+	fileSnapshotStore, err := raft.NewFileSnapshotStore(baseDir, 3, os.Stderr)
 	if err != nil {
 		return nil, nil, fmt.Errorf(`raft.NewFileSnapshotStore(%q, ...): %v`, baseDir, err)
 	}
 
-	tm := transport.New(raft.ServerAddress(myAddress), []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())})
+	transportManager := transport.New(raft.ServerAddress(myAddress), []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())})
 
-	r, err := raft.NewRaft(c, fsm, ldb, sdb, fss, tm.Transport())
+	r, err := raft.NewRaft(c, fsm, ldb, sdb, fileSnapshotStore, transportManager.Transport())
 	if err != nil {
 		return nil, nil, fmt.Errorf("raft.NewRaft: %v", err)
 	}
@@ -108,5 +107,5 @@ func NewRaft(ctx context.Context, myID, myAddress string, fsm raft.FSM) (*raft.R
 		}
 	}
 
-	return r, tm, nil
+	return r, transportManager, nil
 }

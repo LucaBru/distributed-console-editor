@@ -21,7 +21,10 @@ message Share {
   string user_id = 4;
 }
 
-message Delete { string doc_id = 1; }
+message Delete {
+  string doc_id = 1;
+  string user_id = 2;
+}
 
 message Edit {
   string doc_id = 1;

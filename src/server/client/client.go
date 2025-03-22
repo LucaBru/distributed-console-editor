@@ -37,4 +37,10 @@ func main() {
 	}
 	log.Println("Successfully added new shared doc %s", msg.DocId)
 
+	_, err = client.Delete(context.Background(), &editorpb.DeleteReq{DocId: msg.DocId, UserId: "user@mail.com"})
+	if err != nil {
+		log.Fatalln("Error from the server %s", err)
+	}
+	log.Println("Successfully deleted new shared doc %s", msg.DocId)
+
 }

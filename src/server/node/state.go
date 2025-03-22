@@ -6,57 +6,55 @@ import (
 	"editor-service/protos/logpb"
 	"fmt"
 	"io"
-	"log"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/raft"
 	"google.golang.org/protobuf/proto"
 )
 
-type DocId = uuid.UUID
-
 type State struct {
-	docs    map[DocId]chan<- *logpb.Edit
-	shareCh chan *Share
-}
-
-type LogCmd[T any] struct {
-	sendBackCh chan<- *T
-}
-
-type Share struct {
-	LogCmd[struct{}]
-	docId   DocId
-	docName string
-	doc     []byte
-	userId  string
+	docs    map[ot.DocId]chan<- *ot.EditEntry
+	shareCh chan *ot.ShareEntry
+	delCh   chan *ot.DeleteEntry
+	errCh   chan error
 }
 
 func NewState() *State {
-	shareCh := make(chan *Share, 50)
-	delCh := make(chan *logpb.Delete, 50)
-	s := &State{docs: make(map[DocId](chan<- *logpb.Edit)), shareCh: shareCh}
-	go s.run(delCh)
+	shareCh := make(chan *ot.ShareEntry, 50)
+	errCh := make(chan error)
+	delCh := make(chan *ot.DeleteEntry, 50)
+	docs := make(map[ot.DocId](chan<- *ot.EditEntry))
+	s := &State{docs: docs, shareCh: shareCh, errCh: errCh, delCh: delCh}
+	go s.run()
 	return s
 }
 
-func (s *State) run(deleteCh <-chan *logpb.Delete) {
+func (s *State) run() {
 	for {
 		select {
 		case share := <-s.shareCh:
 			{
-				editCh := make(chan *logpb.Edit, 100)
-				ot.NewSharedDoc(share.docName, share.doc, editCh)
-				s.docs[share.docId] = editCh
-				share.sendBackCh <- &struct{}{}
-			}
-		case d := <-deleteCh:
-			{
-				uid, err := uuid.Parse(d.DocId)
+				editCh := make(chan *ot.EditEntry, 100)
+				ot.NewSharedDoc(share.Cmd.DocName, share.Cmd.Doc, editCh)
+				uid, err := uuid.Parse(share.Cmd.DocId)
 				if err != nil {
-					log.Panicln("Error while casting an doc uuid to string")
+					s.errCh <- fmt.Errorf("Share request has an invalid doc id: %w", err)
+					return
 				}
+				s.docs[uid] = editCh
+				share.SendBackCh <- &uid
+			}
+		case del := <-s.delCh:
+			{
+				uid, err := uuid.Parse(del.Cmd.DocId)
+				if err != nil {
+					s.errCh <- fmt.Errorf("Share request has an invalid doc id: %w", err)
+					return
+				}
+				// terminate the doc.run goroutine, at the moment anyone that have the doc id can delete it
+				close(s.docs[uid])
 				delete(s.docs, uid)
+				del.SendBackCh <- nil
 			}
 		}
 	}
@@ -66,20 +64,24 @@ func (s *State) Apply(l *raft.Log) interface{} {
 	cmd := &logpb.Log{}
 	err := proto.Unmarshal(l.Data, cmd)
 	if err != nil {
-		return fmt.Errorf("Failed log conversion: %w", err)
+		return fmt.Errorf("Failed log un-marshalling: %w", err)
 	}
 	switch c := cmd.Cmd.(type) {
 	case *logpb.Log_Share:
 		{
-			ch := make(chan *struct{})
-			uid, err := uuid.Parse(c.Share.DocId)
-			if err != nil {
-				return fmt.Errorf("Share request has an invalid doc id: %w", err)
-			}
-			share := &Share{docId: uid, docName: c.Share.DocName, doc: c.Share.Doc, userId: c.Share.UserId, LogCmd: LogCmd[struct{}]{sendBackCh: ch}}
-			s.shareCh <- share
-			<-ch
-			return &editorpb.ShareReply{DocId: uid.String()}
+			sync := make(chan *ot.DocId)
+			entry := &ot.ShareEntry{SendBackCh: sync, Cmd: c.Share}
+			s.shareCh <- entry
+			docId := <-sync
+			return &editorpb.ShareReply{DocId: docId.String()}
+		}
+	case *logpb.Log_Delete:
+		{
+			sync := make(chan *struct{})
+			entry := &ot.DeleteEntry{SendBackCh: sync, Cmd: c.Delete}
+			s.delCh <- entry
+			<-sync
+			return &editorpb.DeleteReply{}
 		}
 
 	}

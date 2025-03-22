@@ -42,3 +42,16 @@ func (n *Node) Share(ctx context.Context, req *editorpb.ShareReq) (*editorpb.Sha
 	}
 	return reply, nil
 }
+
+func (n *Node) Delete(ctx context.Context, req *editorpb.DeleteReq) (*editorpb.DeleteReply, error) {
+	entry := &logpb.Log{Cmd: &logpb.Log_Delete{Delete: &logpb.Delete{DocId: req.DocId, UserId: req.UserId}}}
+	b, err := proto.Marshal(entry)
+	if err != nil {
+		return nil, &serror.InternalError{Err: fmt.Errorf("Failed to marshal the request: %w", err)}
+	}
+	f := n.Raft.Apply(b, time.Second)
+	if err := f.Error(); err != nil {
+		return nil, rafterrors.MarkRetriable(&serror.InternalError{Err: err})
+	}
+	return &editorpb.DeleteReply{}, nil
+}

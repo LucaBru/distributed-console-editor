@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package log;
+package rlog;
 
 import "protos/editor.proto";
 
-option go_package = "editor-service/protos/logpb";
+option go_package = "editor-service/protos/rlogpb";
 
 message Log {
   oneof cmd {

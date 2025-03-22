@@ -8,4 +8,4 @@ protoc --go_out=src/server/ --go_opt=module=$PREFIX \
 
 protoc --go_out=src/server/  --go_opt=module=$PREFIX \
     --go-grpc_out=src/server/  --go-grpc_opt=module=$PREFIX \
-    src/server/node/log.proto
+    src/server/node/log/log.proto

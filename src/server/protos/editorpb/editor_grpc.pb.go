@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Node_Share_FullMethodName  = "/editor.Node/Share"
-	Node_Delete_FullMethodName = "/editor.Node/Delete"
-	Node_Edit_FullMethodName   = "/editor.Node/Edit"
+	Node_Share_FullMethodName         = "/editor.Node/Share"
+	Node_Delete_FullMethodName        = "/editor.Node/Delete"
+	Node_Edit_FullMethodName          = "/editor.Node/Edit"
+	Node_ListenUpdates_FullMethodName = "/editor.Node/ListenUpdates"
 )
 
 // NodeClient is the client API for Node service.
@@ -30,8 +31,8 @@ const (
 type NodeClient interface {
 	Share(ctx context.Context, in *ShareReq, opts ...grpc.CallOption) (*ShareReply, error)
 	Delete(ctx context.Context, in *DeleteReq, opts ...grpc.CallOption) (*DeleteReply, error)
-	// rpc Recv(stream EditCmd) returns (stream Update) {}
 	Edit(ctx context.Context, in *EditReq, opts ...grpc.CallOption) (*Ack, error)
+	ListenUpdates(ctx context.Context, in *ListenUpdatesReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Update], error)
 }
 
 type nodeClient struct {
@@ -72,14 +73,33 @@ func (c *nodeClient) Edit(ctx context.Context, in *EditReq, opts ...grpc.CallOpt
 	return out, nil
 }
 
+func (c *nodeClient) ListenUpdates(ctx context.Context, in *ListenUpdatesReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Update], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Node_ServiceDesc.Streams[0], Node_ListenUpdates_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ListenUpdatesReq, Update]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Node_ListenUpdatesClient = grpc.ServerStreamingClient[Update]
+
 // NodeServer is the server API for Node service.
 // All implementations must embed UnimplementedNodeServer
 // for forward compatibility.
 type NodeServer interface {
 	Share(context.Context, *ShareReq) (*ShareReply, error)
 	Delete(context.Context, *DeleteReq) (*DeleteReply, error)
-	// rpc Recv(stream EditCmd) returns (stream Update) {}
 	Edit(context.Context, *EditReq) (*Ack, error)
+	ListenUpdates(*ListenUpdatesReq, grpc.ServerStreamingServer[Update]) error
 	mustEmbedUnimplementedNodeServer()
 }
 
@@ -98,6 +118,9 @@ func (UnimplementedNodeServer) Delete(context.Context, *DeleteReq) (*DeleteReply
 }
 func (UnimplementedNodeServer) Edit(context.Context, *EditReq) (*Ack, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Edit not implemented")
+}
+func (UnimplementedNodeServer) ListenUpdates(*ListenUpdatesReq, grpc.ServerStreamingServer[Update]) error {
+	return status.Errorf(codes.Unimplemented, "method ListenUpdates not implemented")
 }
 func (UnimplementedNodeServer) mustEmbedUnimplementedNodeServer() {}
 func (UnimplementedNodeServer) testEmbeddedByValue()              {}
@@ -174,6 +197,17 @@ func _Node_Edit_Handler(srv interface{}, ctx context.Context, dec func(interface
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Node_ListenUpdates_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ListenUpdatesReq)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(NodeServer).ListenUpdates(m, &grpc.GenericServerStream[ListenUpdatesReq, Update]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Node_ListenUpdatesServer = grpc.ServerStreamingServer[Update]
+
 // Node_ServiceDesc is the grpc.ServiceDesc for Node service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -194,6 +228,12 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Node_Edit_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ListenUpdates",
+			Handler:       _Node_ListenUpdates_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "protos/editor.proto",
 }

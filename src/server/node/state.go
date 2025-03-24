@@ -7,7 +7,6 @@ import (
 	"editor-service/protos/logpb"
 	"fmt"
 	"io"
-	"log"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/raft"
@@ -18,7 +17,7 @@ type State struct {
 	docs       map[DocId]chan<- *rlog.EditLog
 	shareDocCh chan *rlog.ShareLog
 	delDocCh   chan *rlog.DeleteLog
-	docChanCh  chan *DocChanReq
+	editCh     chan *rlog.EditLog
 }
 
 type DocId = uuid.UUID
@@ -30,13 +29,14 @@ type DocChanReq struct {
 
 type ShareLogResult = rlog.LogResult[*DocId]
 type DelLogResult = rlog.LogResult[*struct{}]
+type EditLogResult = rlog.LogResult[*struct{}]
 
 func NewState() *State {
 	shareCh := make(chan *rlog.ShareLog, 50)
 	delCh := make(chan *rlog.DeleteLog, 50)
-	docCh := make(chan *DocChanReq)
+	editCh := make(chan *rlog.EditLog)
 	docs := make(map[DocId](chan<- *rlog.EditLog))
-	s := &State{docs: docs, shareDocCh: shareCh, delDocCh: delCh, docChanCh: docCh}
+	s := &State{docs: docs, shareDocCh: shareCh, delDocCh: delCh, editCh: editCh}
 	go s.run()
 	return s
 }
@@ -64,11 +64,20 @@ func (s *State) run() {
 				delete(s.docs, uid)
 				del.StateCh <- &DelLogResult{Err: nil}
 			}
-		case req := <-s.docChanCh:
+		case req := <-s.editCh:
 			{
-				ch := s.docs[*req.docId]
-				// send nil if the doc isn't available
-				req.StateCh <- ch
+				uid, err := uuid.Parse(req.Cmd.DocId)
+				if err != nil {
+					req.StateCh <- &DelLogResult{Err: fmt.Errorf("Share request has an invalid doc id: %w", err)}
+					return
+				}
+				editCh := s.docs[uid]
+				if editCh == nil {
+					req.StateCh <- &DelLogResult{Err: fmt.Errorf("The document to update was deleted")}
+					return
+				}
+				editCh <- req
+				req.StateCh <- &EditLogResult{}
 			}
 		}
 	}
@@ -83,7 +92,7 @@ func (s *State) Apply(l *raft.Log) interface{} {
 	switch c := cmd.Cmd.(type) {
 	case *logpb.Log_Share:
 		{
-			sync := make(chan *rlog.LogResult[*DocId])
+			sync := make(chan *ShareLogResult)
 			entry := &rlog.ShareLog{StateCh: sync, Cmd: c.Share}
 			s.shareDocCh <- entry
 			res := <-sync
@@ -94,7 +103,7 @@ func (s *State) Apply(l *raft.Log) interface{} {
 		}
 	case *logpb.Log_Delete:
 		{
-			sync := make(chan *rlog.LogResult[*struct{}])
+			sync := make(chan *DelLogResult)
 			entry := &rlog.DeleteLog{StateCh: sync, Cmd: c.Delete}
 			s.delDocCh <- entry
 			res := <-sync
@@ -105,23 +114,12 @@ func (s *State) Apply(l *raft.Log) interface{} {
 		}
 	case *logpb.Log_Edit:
 		{
-			ch := make(chan chan<- *rlog.EditLog)
-			uid, err := uuid.Parse(c.Edit.DocId)
-			if err != nil {
-				log.Println("Invalid doc id")
-				return fmt.Errorf("Share request has an invalid doc id: %w", err)
-			}
-			editChanReq := &DocChanReq{docId: &uid, StateCh: ch}
-			s.docChanCh <- editChanReq
-			editCh := <-ch
-			if editCh == nil {
-				return fmt.Errorf("The document to update was deleted")
-			}
-			sync := make(chan *rlog.LogResult[*struct{}])
+
+			sync := make(chan *EditLogResult)
 			entry := &rlog.EditLog{StateCh: sync, Cmd: c.Edit}
-			editCh <- entry
-			reply := <-sync
-			if reply.Err != nil {
+			s.editCh <- entry
+			res := <-sync
+			if res.Err != nil {
 				return fmt.Errorf("Failed to modify the document: %w", err)
 			}
 			return &editorpb.Ack{}
@@ -130,6 +128,10 @@ func (s *State) Apply(l *raft.Log) interface{} {
 	}
 	// add default error
 	return nil
+}
+
+func (s *State) RegisterListener(docId *DocId) {
+
 }
 
 func (s *State) Snapshot() (raft.FSMSnapshot, error) {

@@ -7,8 +7,8 @@ option go_package = "editor-service/protos/editorpb";
 service Node {
   rpc Share(ShareReq) returns (ShareReply) {}
   rpc Delete(DeleteReq) returns (DeleteReply) {}
-  // rpc Recv(stream EditCmd) returns (stream Update) {}
   rpc Edit(EditReq) returns (Ack) {}
+  rpc ListenUpdates(ListenUpdatesReq) returns (stream Update) {}
 }
 
 message ShareReq {
@@ -38,3 +38,6 @@ message Op {
   int32 n = 1;
   string s = 2;
 }
+
+message ListenUpdatesReq { string doc_id = 1; }
+message Update { repeated Op ops = 1; }

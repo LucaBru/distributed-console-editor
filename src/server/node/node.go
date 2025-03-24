@@ -17,7 +17,8 @@ import (
 
 type Node struct {
 	editorpb.UnimplementedNodeServer
-	Raft *raft.Raft
+	Raft  *raft.Raft
+	state *State
 }
 
 func NewNode(r *raft.Raft) *Node {
@@ -60,4 +61,15 @@ func Apply[R any](n *Node, log *logpb.Log) (*R, error) {
 		return reply, nil
 	}
 	return nil, &serror.InternalError{Err: errors.New("Failed to convert FSM response")}
+}
+
+func (s *Node) ListenUpdates(req *editorpb.ListenUpdatesReq, stream editorpb.Node_ListenUpdatesServer) error {
+	listenUpdates := make(chan []*editorpb.Op, 20)
+	//  guarantee termination whenever the document is done TODO:
+	
+	for ops := range listenUpdates {
+		stream.Send(&editorpb.Update{Ops: ops})
+	}
+	close(listenUpdates)
+	return nil
 }

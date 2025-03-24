@@ -9,7 +9,6 @@ import (
 	"editor-service/protos/editorpb"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	_ "github.com/Jille/grpc-multi-resolver"
@@ -45,7 +44,8 @@ func main() {
 			if err != nil {
 				fmt.Errorf("Failed to receive a note : %v", err)
 			}
-			fmt.Printf("Alice got message %v\n", in.Ops)
+			aliceDoc.Apply(ot.NewOps(in.Ops))
+			fmt.Printf("Alice got message %v, her local doc is updated to: %s\n", in.Ops, aliceDoc)
 		}
 	}()
 
@@ -65,7 +65,8 @@ func main() {
 			if err != nil {
 				fmt.Errorf("Failed to receive a note : %v", err)
 			}
-			fmt.Printf("Alice got message %v\n", in.Ops)
+			bobDoc.Apply(ot.NewOps(in.Ops))
+			fmt.Printf("Bob got message %v, her local doc is updated to: %s\n", in.Ops, aliceDoc)
 		}
 	}()
 	ops := []*editorpb.Op{&editorpb.Op{N: 5}, &editorpb.Op{N: 0, S: " World!"}}
@@ -97,18 +98,4 @@ func clientConn(userId string) *grpc.ClientConn {
 		fmt.Errorf("dialing failed: %v", err)
 	}
 	return conn
-}
-
-func listenForUpdates(userId string, stream grpc.BidiStreamingClient[editorpb.ListenerReq, editorpb.Update], wg *sync.WaitGroup) {
-	wg.Add(1)
-	for {
-		in, err := stream.Recv()
-		if err == io.EOF {
-			return
-		}
-		if err != nil {
-			fmt.Errorf("Failed to receive a note : %v", err)
-		}
-		fmt.Printf("%s got an update from other collaborators: %v\n", userId, in.Ops)
-	}
 }

@@ -43,7 +43,7 @@ func (d *SharedDoc) run() {
 		if err = d.doc.Apply(ops); err != nil {
 			log.StateCh <- &rlog.LogResult[*struct{}]{Err: fmt.Errorf("Operations application failed: %w", err)}
 		}
-		fmt.Printf(fmt.Sprintf("Shared doc was updated from '%s' to '%s'", string(old), string(d.doc)))
+		fmt.Printf(fmt.Sprintf("Shared doc was updated from '%s' to '%s\n'", string(old), string(d.doc)))
 		d.history = append(d.history, ops)
 
 		// notify all the collaborators with new ops

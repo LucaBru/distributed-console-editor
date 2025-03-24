@@ -5,8 +5,11 @@ package main
 
 import (
 	"context"
+	"editor-service/node/ot"
 	"editor-service/protos/editorpb"
-	"log"
+	"fmt"
+	"io"
+	"sync"
 	"time"
 
 	_ "github.com/Jille/grpc-multi-resolver"
@@ -17,6 +20,70 @@ import (
 )
 
 func main() {
+	var aliceDoc ot.Doc
+	aliceDoc = []byte("Hello")
+	bobDoc := aliceDoc
+	aliceConn := clientConn("Alice")
+	alice := editorpb.NewNodeClient(aliceConn)
+	msg, err := alice.Share(context.Background(), &editorpb.ShareReq{DocName: "Thesis", Doc: aliceDoc, UserId: "user@mail.com"})
+	if err != nil {
+		fmt.Errorf("Error from the server %s", err)
+	}
+	thesisId := msg.DocId
+	fmt.Printf("Successfully added new shared doc 'Thesis' with id %s\n", thesisId)
+	aliceStream, _ := alice.HandleListener(context.Background())
+	aliceStream.Send(&editorpb.ListenerReq{DocId: thesisId, UserId: "Alice"})
+	waitAlice := make(chan struct{})
+	go func() {
+		for {
+			in, err := aliceStream.Recv()
+			if err == io.EOF {
+				// read done.
+				close(waitAlice)
+				return
+			}
+			if err != nil {
+				fmt.Errorf("Failed to receive a note : %v", err)
+			}
+			fmt.Printf("Alice got message %v\n", in.Ops)
+		}
+	}()
+
+	bobConn := clientConn("Bob")
+	bob := editorpb.NewNodeClient(bobConn)
+	bobStream, _ := bob.HandleListener(context.Background())
+	bobStream.Send(&editorpb.ListenerReq{DocId: thesisId, UserId: "Bob"})
+	waitBob := make(chan struct{})
+	go func() {
+		for {
+			in, err := bobStream.Recv()
+			if err == io.EOF {
+				// read done.
+				close(waitBob)
+				return
+			}
+			if err != nil {
+				fmt.Errorf("Failed to receive a note : %v", err)
+			}
+			fmt.Printf("Alice got message %v\n", in.Ops)
+		}
+	}()
+	ops := []*editorpb.Op{&editorpb.Op{N: 5}, &editorpb.Op{N: 0, S: " World!"}}
+	bobDoc.Apply(ot.NewOps(ops))
+	fmt.Printf("Bob update his local doc to %s\n", string(bobDoc))
+	_, err = bob.Edit(context.Background(), &editorpb.EditReq{DocId: thesisId, Rev: 0, Ops: ops, UserId: "Bob"})
+	if err != nil {
+		fmt.Errorf("Error from the server %s", err)
+	}
+	fmt.Printf("Bob successfully updated shared doc %s\n", msg.DocId)
+	bobStream.CloseSend()
+	aliceStream.CloseSend()
+	<-waitBob
+	<-waitAlice
+
+}
+
+func clientConn(userId string) *grpc.ClientConn {
 	serviceConfig := `{"healthCheckConfig": {"serviceName": "Example"}, "loadBalancingConfig": [ { "round_robin": {} } ]}`
 	retryOpts := []grpc_retry.CallOption{
 		grpc_retry.WithBackoff(grpc_retry.BackoffExponential(100 * time.Millisecond)),
@@ -27,27 +94,21 @@ func main() {
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 		grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(retryOpts...)))
 	if err != nil {
-		log.Fatalf("dialing failed: %v", err)
+		fmt.Errorf("dialing failed: %v", err)
 	}
-	defer conn.Close()
-	client := editorpb.NewNodeClient(conn)
-	msg, err := client.Share(context.Background(), &editorpb.ShareReq{DocName: "Hello", Doc: []byte("Hello"), UserId: "user@mail.com"})
-	if err != nil {
-		log.Fatalln("Error from the server %s", err)
-	}
-	log.Println("Successfully added new shared doc %s", msg.DocId)
+	return conn
+}
 
-	ops := []*editorpb.Op{&editorpb.Op{N: 5}, &editorpb.Op{N: 0, S: " World!"}}
-	_, err = client.Edit(context.Background(), &editorpb.EditReq{DocId: msg.DocId, Rev: 0, Ops: ops, UserId: "user@mail.com"})
-	if err != nil {
-		log.Fatalln("Error from the server %s", err)
+func listenForUpdates(userId string, stream grpc.BidiStreamingClient[editorpb.ListenerReq, editorpb.Update], wg *sync.WaitGroup) {
+	wg.Add(1)
+	for {
+		in, err := stream.Recv()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			fmt.Errorf("Failed to receive a note : %v", err)
+		}
+		fmt.Printf("%s got an update from other collaborators: %v\n", userId, in.Ops)
 	}
-	log.Println("Successfully updated shared doc %s", msg.DocId)
-
-	_, err = client.Delete(context.Background(), &editorpb.DeleteReq{DocId: msg.DocId, UserId: "user@mail.com"})
-	if err != nil {
-		log.Fatalln("Error from the server %s", err)
-	}
-	log.Println("Successfully deleted new shared doc %s", msg.DocId)
-
 }

@@ -7,23 +7,26 @@ import (
 
 // SharedDoc represents shared document with revision history.
 type SharedDoc struct {
-	name    string
-	creator string
-	doc     Doc
-	history []Ops
-	editCh  <-chan *rlog.EditLog
+	name      string
+	creator   string
+	doc       Doc
+	history   []Ops
+	EditCh    chan *rlog.EditLog
+	Listeners map[string]chan<- Ops
 }
 
-func NewSharedDoc(name string, doc []byte, ch <-chan *rlog.EditLog) {
+func NewSharedDoc(name string, doc []byte, ch chan *rlog.EditLog) *SharedDoc {
 	d := &SharedDoc{
-		doc:    doc,
-		editCh: ch,
+		doc:       doc,
+		EditCh:    ch,
+		Listeners: make(map[string]chan<- Ops),
 	}
 	go d.run()
+	return d
 }
 
 func (d *SharedDoc) run() {
-	for log := range d.editCh {
+	for log := range d.EditCh {
 		rev := int(log.Cmd.Rev)
 		ops := NewOps(log.Cmd.Ops)
 		var err error
@@ -40,9 +43,16 @@ func (d *SharedDoc) run() {
 		if err = d.doc.Apply(ops); err != nil {
 			log.StateCh <- &rlog.LogResult[*struct{}]{Err: fmt.Errorf("Operations application failed: %w", err)}
 		}
-		fmt.Println(fmt.Sprintf("Shared doc was updated from '%s' to '%s'", string(old), string(d.doc)))
+		fmt.Printf(fmt.Sprintf("Shared doc was updated from '%s' to '%s'", string(old), string(d.doc)))
 		d.history = append(d.history, ops)
-		// notify all the collaborators with new ops 	TODO:
+
+		// notify all the collaborators with new ops
+		for userId, collaborator := range d.Listeners {
+			if userId != log.Cmd.UserId {
+				collaborator <- ops
+			}
+		}
+
 		log.StateCh <- &rlog.LogResult[*struct{}]{}
 	}
 }

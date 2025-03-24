@@ -3,10 +3,11 @@ package node
 import (
 	"context"
 	serror "editor-service/errors"
+	"editor-service/node/ot"
 	"editor-service/protos/editorpb"
 	"editor-service/protos/logpb"
-	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/Jille/raft-grpc-leader-rpc/rafterrors"
@@ -21,9 +22,10 @@ type Node struct {
 	state *State
 }
 
-func NewNode(r *raft.Raft) *Node {
+func NewNode(r *raft.Raft, s State) *Node {
 	return &Node{
-		Raft: r,
+		Raft:  r,
+		state: &s,
 	}
 }
 
@@ -45,7 +47,7 @@ func (n *Node) Edit(ctx context.Context, req *editorpb.EditReq) (*editorpb.Ack, 
 func Apply[R any](n *Node, log *logpb.Log) (*R, error) {
 	b, err := proto.Marshal(log)
 	if err != nil {
-		return nil, &serror.InternalError{Err: fmt.Errorf("Failed to marshal the request: %w", err)}
+		return nil, &serror.InternalError{Err: fmt.Errorf("Log marshal failed: %w", err)}
 	}
 	f := n.Raft.Apply(b, time.Second)
 	if err := f.Error(); err != nil {
@@ -60,16 +62,54 @@ func Apply[R any](n *Node, log *logpb.Log) (*R, error) {
 	if ok {
 		return reply, nil
 	}
-	return nil, &serror.InternalError{Err: errors.New("Failed to convert FSM response")}
+	return nil, &serror.InternalError{Err: fmt.Errorf("FSM response into %T conversion failed", reply)}
 }
 
-func (s *Node) ListenUpdates(req *editorpb.ListenUpdatesReq, stream editorpb.Node_ListenUpdatesServer) error {
-	listenUpdates := make(chan []*editorpb.Op, 20)
-	//  guarantee termination whenever the document is done TODO:
-	
-	for ops := range listenUpdates {
-		stream.Send(&editorpb.Update{Ops: ops})
+func (n *Node) HandleListener(stream editorpb.Node_HandleListenerServer) error {
+	reqCh := make(chan *editorpb.ListenerReq)
+	errCh := make(chan error)
+	go func(stream *editorpb.Node_HandleListenerServer, reqCh chan<- *editorpb.ListenerReq, errCh chan<- error) {
+		req, err := (*stream).Recv()
+		if err == io.EOF {
+			errCh <- nil
+			return
+		}
+		if err != nil {
+			errCh <- err
+			return
+		}
+		reqCh <- req
+	}(&stream, reqCh, errCh)
+
+	listenUpdates := make(chan ot.Ops, 20)
+	var req *editorpb.ListenerReq
+	select {
+	case req = <-reqCh:
+		{
+			err := n.state.SubListener(req, listenUpdates)
+			if err != nil {
+				return err
+			}
+		}
+	case err := <-errCh:
+		return err
 	}
-	close(listenUpdates)
-	return nil
+
+	for {
+		select {
+		case req := <-reqCh:
+			return n.state.UnsubListener(req)
+
+		case err := <-errCh:
+			{
+				n.state.UnsubListener(req)
+				return err
+			}
+		case ops, ok := <-listenUpdates:
+			stream.Send(&editorpb.Update{Ops: ops.WireFmt()})
+			if !ok {
+				return fmt.Errorf("Document you were listening to has been deleted")
+			}
+		}
+	}
 }

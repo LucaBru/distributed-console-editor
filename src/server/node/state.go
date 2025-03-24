@@ -1,6 +1,7 @@
 package node
 
 import (
+	serror "editor-service/errors"
 	rlog "editor-service/node/log"
 	"editor-service/node/ot"
 	"editor-service/protos/editorpb"
@@ -14,70 +15,98 @@ import (
 )
 
 type State struct {
-	docs       map[DocId]chan<- *rlog.EditLog
-	shareDocCh chan *rlog.ShareLog
-	delDocCh   chan *rlog.DeleteLog
-	editCh     chan *rlog.EditLog
+	docs            map[DocId]*ot.SharedDoc
+	shareDocCh      chan<- *rlog.ShareLog
+	delDocCh        chan<- *rlog.DeleteLog
+	editCh          chan<- *rlog.EditLog
+	subListenerCh   chan<- *ListenerReq
+	unsubListenerCh chan<- *ListenerReq
 }
 
 type DocId = uuid.UUID
-
-type DocChanReq struct {
-	docId   *DocId
-	StateCh chan chan<- *rlog.EditLog
-}
 
 type ShareLogResult = rlog.LogResult[*DocId]
 type DelLogResult = rlog.LogResult[*struct{}]
 type EditLogResult = rlog.LogResult[*struct{}]
 
+type ListenerReq struct {
+	docId     DocId
+	userId    string
+	stateCh   chan error
+	updatesCh chan<- ot.Ops
+}
+
 func NewState() *State {
 	shareCh := make(chan *rlog.ShareLog, 50)
 	delCh := make(chan *rlog.DeleteLog, 50)
-	editCh := make(chan *rlog.EditLog)
-	docs := make(map[DocId](chan<- *rlog.EditLog))
-	s := &State{docs: docs, shareDocCh: shareCh, delDocCh: delCh, editCh: editCh}
-	go s.run()
+	editCh := make(chan *rlog.EditLog, 200)
+	subCh := make(chan *ListenerReq, 50)
+	unsubCh := make(chan *ListenerReq, 50)
+	docs := make(map[DocId]*ot.SharedDoc)
+	s := &State{docs: docs, shareDocCh: shareCh, delDocCh: delCh, editCh: editCh, subListenerCh: subCh, unsubListenerCh: unsubCh}
+	go s.run(shareCh, delCh, editCh, subCh, unsubCh)
 	return s
 }
 
-func (s *State) run() {
+func (s *State) run(shareCh <-chan *rlog.ShareLog, delCh <-chan *rlog.DeleteLog, editCh <-chan *rlog.EditLog, subCh <-chan *ListenerReq, unsubCh <-chan *ListenerReq) {
 	for {
 		select {
-		case req := <-s.shareDocCh:
+		case req := <-shareCh:
 			{
-				docCh := make(chan *rlog.EditLog, 100)
-				ot.NewSharedDoc(req.Cmd.DocName, req.Cmd.Doc, docCh)
 				uid, _ := uuid.Parse(req.Cmd.DocId)
-				s.docs[uid] = docCh
+				docCh := make(chan *rlog.EditLog, 100)
+				s.docs[uid] = ot.NewSharedDoc(req.Cmd.DocName, req.Cmd.Doc, docCh)
 				req.StateCh <- &ShareLogResult{Msg: &uid}
 			}
-		case del := <-s.delDocCh:
+		case del := <-delCh:
 			{
 				uid, err := uuid.Parse(del.Cmd.DocId)
 				if err != nil {
-					del.StateCh <- &DelLogResult{Err: fmt.Errorf("Share request has an invalid doc id: %w", err)}
-					return
+					del.StateCh <- &DelLogResult{Err: &serror.DocIdError{Err: err}}
+					break
 				}
-				// terminate the doc.run goroutine, at the moment anyone that have the doc id can delete it
-				close(s.docs[uid])
+				doc := s.docs[uid]
+				close(doc.EditCh)
+				for _, listener := range doc.Listeners {
+					close(listener)
+				}
 				delete(s.docs, uid)
 				del.StateCh <- &DelLogResult{Err: nil}
 			}
-		case req := <-s.editCh:
+		case req := <-editCh:
 			{
 				uid, err := uuid.Parse(req.Cmd.DocId)
 				if err != nil {
-					req.StateCh <- &DelLogResult{Err: fmt.Errorf("Share request has an invalid doc id: %w", err)}
-					return
+					req.StateCh <- &DelLogResult{Err: &serror.DocIdError{Err: err}}
+					break
 				}
-				editCh := s.docs[uid]
+				editCh := s.docs[uid].EditCh
 				if editCh == nil {
-					req.StateCh <- &DelLogResult{Err: fmt.Errorf("The document to update was deleted")}
-					return
+					req.StateCh <- &DelLogResult{Err: &serror.SharedDocNotFound{}}
+					break
 				}
 				editCh <- req
 				req.StateCh <- &EditLogResult{}
+			}
+		case req := <-subCh:
+			{
+				doc := s.docs[req.docId]
+				if doc == nil {
+					req.stateCh <- &serror.SharedDocNotFound{}
+					break
+				}
+				doc.Listeners[req.userId] = req.updatesCh
+				req.stateCh <- nil
+			}
+		case req := <-unsubCh:
+			{
+				doc := s.docs[req.docId]
+				if doc == nil {
+					req.stateCh <- &serror.SharedDocNotFound{}
+					break
+				}
+				delete(doc.Listeners, req.userId)
+				req.stateCh <- nil
 			}
 		}
 	}
@@ -87,7 +116,7 @@ func (s *State) Apply(l *raft.Log) interface{} {
 	cmd := &logpb.Log{}
 	err := proto.Unmarshal(l.Data, cmd)
 	if err != nil {
-		return fmt.Errorf("Failed to unmarshal log: %w", err)
+		return fmt.Errorf("Log unmarshal failed: %w", err)
 	}
 	switch c := cmd.Cmd.(type) {
 	case *logpb.Log_Share:
@@ -114,7 +143,6 @@ func (s *State) Apply(l *raft.Log) interface{} {
 		}
 	case *logpb.Log_Edit:
 		{
-
 			sync := make(chan *EditLogResult)
 			entry := &rlog.EditLog{StateCh: sync, Cmd: c.Edit}
 			s.editCh <- entry
@@ -124,14 +152,34 @@ func (s *State) Apply(l *raft.Log) interface{} {
 			}
 			return &editorpb.Ack{}
 		}
-
 	}
-	// add default error
 	return nil
 }
 
-func (s *State) RegisterListener(docId *DocId) {
+func (s *State) SubListener(req *editorpb.ListenerReq, updatesCh chan<- ot.Ops) error {
+	uid, err := uuid.Parse(req.DocId)
+	if err != nil {
+		return &serror.DocIdError{Err: err}
+	}
+	sync := make(chan error)
+	subReq := &ListenerReq{
+		docId: uid, userId: req.UserId, stateCh: sync, updatesCh: updatesCh,
+	}
+	s.subListenerCh <- subReq
+	return <-sync
+}
 
+func (s *State) UnsubListener(req *editorpb.ListenerReq) error {
+	uid, err := uuid.Parse(req.DocId)
+	if err != nil {
+		return &serror.DocIdError{Err: err}
+	}
+	sync := make(chan error)
+	unsubReq := &ListenerReq{
+		docId: uid, userId: req.UserId, stateCh: sync,
+	}
+	s.unsubListenerCh <- unsubReq
+	return <-sync
 }
 
 func (s *State) Snapshot() (raft.FSMSnapshot, error) {

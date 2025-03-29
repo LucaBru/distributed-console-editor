@@ -2,7 +2,7 @@ package main
 
 import (
 	"log"
-	"client/src"
+	"client/editor"
 
 	"github.com/nsf/termbox-go"
 )

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/nsf/termbox-go"
+	"google.golang.org/grpc"
 )
 
 type Editor struct {
@@ -20,6 +21,7 @@ type Editor struct {
 	foregroundColor       termbox.Attribute
 	statusBackgroundColor termbox.Attribute
 	statusForegroundColor termbox.Attribute
+	connectionManager *grpc.ClientConn
 }
 
 func NewEditor() *Editor {
@@ -30,6 +32,7 @@ func NewEditor() *Editor {
 		statusBackgroundColor: termbox.ColorBlack,
 		statusForegroundColor: termbox.ColorWhite,
 		filename: "untitled.txt",
+		cursor: *newCursor(),
 	}
 }
 

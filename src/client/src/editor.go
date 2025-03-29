@@ -9,27 +9,27 @@ import (
 )
 
 type Editor struct {
-	buffer []string // These are the lines of text
-	cursorX int // Position of cursor on X axis
-	cursorY int // Position of cursor on axis Y
-	offsetX int // Scroll on X axis
-	offsetY int // Scroll on Y axis
-	filename string // File where text will be saved
-	modified bool
-	statusMsg string
-	backgroundColor termbox.Attribute
-	foregroundColor termbox.Attribute
+	buffer                []string // These are the lines of text
+	cursor                Cursor
+	offsetX               int    // Scroll on X axis
+	offsetY               int    // Scroll on Y axis
+	filename              string // File where text will be saved
+	modified              bool
+	statusMsg             string
+	backgroundColor       termbox.Attribute
+	foregroundColor       termbox.Attribute
 	statusBackgroundColor termbox.Attribute
 	statusForegroundColor termbox.Attribute
 }
 
 func NewEditor() *Editor {
 	return &Editor{
-		buffer: []string{""},
-		backgroundColor: termbox.ColorDefault,
-		foregroundColor: termbox.ColorDefault,
+		buffer:                []string{""},
+		backgroundColor:       termbox.ColorDefault,
+		foregroundColor:       termbox.ColorDefault,
 		statusBackgroundColor: termbox.ColorBlack,
 		statusForegroundColor: termbox.ColorWhite,
+		filename: "untitled.txt",
 	}
 }
 
@@ -42,12 +42,12 @@ func (editor *Editor) Draw() {
 	editor.drawText(width, height)
 	editor.drawStatus(width, height)
 
-	termbox.SetCursor(editor.cursorX - editor.offsetX, editor.cursorY - editor.offsetY)
+	termbox.SetCursor(editor.cursor.x-editor.offsetX, editor.cursor.y-editor.offsetY)
 	termbox.Flush()
 }
 
 func (editor *Editor) drawText(width int, height int) {
-	for y := 0; y < height - 1; y++ {
+	for y := 0; y < height-1; y++ {
 		lineY := y + editor.offsetY
 		if lineY >= len(editor.buffer) {
 			// In this case we are trying to display a line that is not in the buffer
@@ -77,7 +77,7 @@ func (editor *Editor) drawStatus(width int, height int) {
 
 	// We fill the status line with spaces
 	for x := 0; x < width; x++ {
-		termbox.SetCell(x, height - 1, ' ', editor.statusBackgroundColor, editor.statusForegroundColor)
+		termbox.SetCell(x, height-1, ' ', editor.statusBackgroundColor, editor.statusForegroundColor)
 	}
 
 	// Draw the status
@@ -85,98 +85,135 @@ func (editor *Editor) drawStatus(width int, height int) {
 		if x >= width {
 			break
 		}
-		termbox.SetCell(x, height - 1, char, editor.statusBackgroundColor, editor.statusForegroundColor)
+		termbox.SetCell(x, height-1, char, editor.statusBackgroundColor, editor.statusForegroundColor)
 	}
 
 }
 
 func (editor *Editor) insertRune(char rune) {
-	line := []rune(editor.buffer[editor.cursorY])
+	line := []rune(editor.buffer[editor.cursor.y])
 	width, _ := termbox.Size()
-	if editor.cursorX > len(line) {
+	if editor.cursor.x > len(line) {
 		// If cursor is over the end of the current line we insert some spaces to fill the void
-		for i := len(line); i < editor.cursorX; i++ {
+		for i := len(line); i < editor.cursor.x; i++ {
 			line = append(line, ' ')
 		}
 	}
 
 	// Now we can insert the character
-	line = append(line[:editor.cursorX], append([]rune{char}, line[editor.cursorX:]...)...)
+	line = append(line[:editor.cursor.x], append([]rune{char}, line[editor.cursor.x:]...)...)
 	if len(line) > width {
+		// In this case since we are writing over the available space we scroll horizontally
 		editor.offsetX++
 	}
-	editor.buffer[editor.cursorY] = string(line)
-	editor.cursorX++
+	editor.buffer[editor.cursor.y] = string(line)
+	editor.cursor.moveRight()
 	editor.modified = true
 }
 
 // InsertNewline inserts a newline at the current cursor position
 func (editor *Editor) insertNewline() {
-	if editor.cursorY >= len(editor.buffer) {
+	_, height := termbox.Size()
+	if editor.cursor.y >= len(editor.buffer) {
 		editor.buffer = append(editor.buffer, "")
 	} else {
-		line := editor.buffer[editor.cursorY]
+		line := editor.buffer[editor.cursor.y]
 		beforeCursor := ""
 		afterCursor := ""
-		
-		if editor.cursorX < len(line) {
-			beforeCursor = line[:editor.cursorX]
-			afterCursor = line[editor.cursorX:]
+
+		if editor.cursor.x < len(line) {
+			beforeCursor = line[:editor.cursor.x]
+			afterCursor = line[editor.cursor.x:]
 		} else {
 			beforeCursor = line
 		}
-		
-		editor.buffer[editor.cursorY] = beforeCursor
-		
+
+		editor.buffer[editor.cursor.y] = beforeCursor
+
 		// Insert a new line after the current one
 		editor.buffer = append(
-			editor.buffer[:editor.cursorY+1],
-			append([]string{afterCursor}, editor.buffer[editor.cursorY+1:]...)...,
+			editor.buffer[:editor.cursor.y+1],
+			append([]string{afterCursor}, editor.buffer[editor.cursor.y+1:]...)...,
 		)
 	}
-	
-	editor.cursorY++
-	editor.cursorX = 0
+
+	editor.cursor.moveDown()
+	if editor.cursor.y > height-2 {
+		editor.offsetY++
+	}
+	editor.cursor.returnToTheBeginOfTheLine()
 	editor.modified = true
 }
 
 // DeleteChar deletes the character at the current cursor position
 func (editor *Editor) deleteChar() {
-	if editor.cursorX == 0 && editor.cursorY == 0 {
+	if editor.cursor.x == 0 && editor.cursor.y == 0 {
 		return
 	}
-	
-	if editor.cursorX > 0 {
+
+	if editor.cursor.x > 0 {
 		// Delete character before cursor
-		line := []rune(editor.buffer[editor.cursorY])
-		if editor.cursorX <= len(line) {
-			line = append(line[:editor.cursorX-1], line[editor.cursorX:]...)
-			editor.buffer[editor.cursorY] = string(line)
-			editor.cursorX--
+		line := []rune(editor.buffer[editor.cursor.y])
+		if editor.cursor.x <= len(line) {
+			line = append(line[:editor.cursor.x-1], line[editor.cursor.x:]...)
+			editor.buffer[editor.cursor.y] = string(line)
+			editor.cursor.moveLeft()
 		}
 	} else {
 		// Backspace at the beginning of a line, join with previous line
-		if editor.cursorY > 0 {
-			prevLineLen := len(editor.buffer[editor.cursorY-1])
-			editor.buffer[editor.cursorY-1] += editor.buffer[editor.cursorY]
-			editor.buffer = append(editor.buffer[:editor.cursorY], editor.buffer[editor.cursorY+1:]...)
-			editor.cursorY--
-			editor.cursorX = prevLineLen
+		if editor.cursor.y > 0 {
+			prevLineLen := len(editor.buffer[editor.cursor.y-1])
+			editor.buffer[editor.cursor.y-1] += editor.buffer[editor.cursor.y]
+			editor.buffer = append(editor.buffer[:editor.cursor.y], editor.buffer[editor.cursor.y+1:]...)
+			editor.cursor.goToTheEndOfPreviousLine(prevLineLen)
 		}
 	}
-	
+
 	editor.modified = true
 }
 
 // SaveFile saves the current buffer to a file
 func (editor *Editor) saveFile() {
 	content := strings.Join(editor.buffer, "\n")
-	err := os.WriteFile(editor.filename, []byte(content), 0644)
+	file, file_err := os.Create(editor.filename)
+	if file_err != nil {
+		editor.setStatus("Error opening file: " + file_err.Error())
+		return
+	}
+	err := os.WriteFile(file.Name(), []byte(content), 0644)
 	if err != nil {
 		editor.setStatus("Error saving file: " + err.Error())
 	} else {
 		editor.modified = false
 		editor.setStatus(fmt.Sprintf("Saved %s (%d bytes)", editor.filename, len(content)))
+	}
+}
+
+func (editor *Editor) scrollRight() {
+	if editor.cursor.x < len(editor.buffer[editor.cursor.y]) {
+		editor.cursor.moveRight()
+		editor.offsetX++
+	}
+}
+
+func (editor *Editor) scrollLeft() {
+	if editor.offsetX > 0 && editor.cursor.x > 0 {
+		editor.cursor.moveLeft()
+		editor.offsetX--
+	}
+}
+
+func (editor *Editor) scrollUp() {
+	if editor.offsetY > 0 && editor.cursor.y > 0 {
+		editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y - 1]))
+		editor.offsetY--
+	}
+}
+
+func (editor *Editor) scrollDown() {
+	if editor.cursor.y < len(editor.buffer)-1 {
+		editor.cursor.goToTheEndOfNextLine(len(editor.buffer[editor.cursor.y+1]))
+		editor.offsetY++
 	}
 }
 
@@ -192,6 +229,16 @@ func (editor *Editor) OnKeyEvent(event termbox.Event) bool {
 	case termbox.KeyCtrlQ:
 		// We should exit
 		return true
+	case termbox.KeyCtrlS:
+		editor.saveFile()
+	case termbox.KeyArrowUp:
+		editor.scrollUp()
+	case termbox.KeyArrowDown:
+		editor.scrollDown()
+	case termbox.KeyArrowRight:
+		editor.scrollRight()
+	case termbox.KeyArrowLeft:
+		editor.scrollLeft()
 	case termbox.KeyEnter:
 		editor.insertNewline()
 	case termbox.KeyBackspace, termbox.KeyBackspace2, termbox.KeyDelete:

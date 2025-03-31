@@ -19,10 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Node_Share_FullMethodName          = "/editor.Node/Share"
-	Node_Delete_FullMethodName         = "/editor.Node/Delete"
-	Node_Edit_FullMethodName           = "/editor.Node/Edit"
-	Node_HandleListener_FullMethodName = "/editor.Node/HandleListener"
+	Node_Share_FullMethodName         = "/editor.Node/Share"
+	Node_Delete_FullMethodName        = "/editor.Node/Delete"
+	Node_Edit_FullMethodName          = "/editor.Node/Edit"
+	Node_WatchDocument_FullMethodName = "/editor.Node/WatchDocument"
 )
 
 // NodeClient is the client API for Node service.
@@ -32,7 +32,7 @@ type NodeClient interface {
 	Share(ctx context.Context, in *ShareReq, opts ...grpc.CallOption) (*ShareReply, error)
 	Delete(ctx context.Context, in *DeleteReq, opts ...grpc.CallOption) (*DeleteReply, error)
 	Edit(ctx context.Context, in *EditReq, opts ...grpc.CallOption) (*Ack, error)
-	HandleListener(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ListenerReq, Update], error)
+	WatchDocument(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[WatchReq, Update], error)
 }
 
 type nodeClient struct {
@@ -73,18 +73,18 @@ func (c *nodeClient) Edit(ctx context.Context, in *EditReq, opts ...grpc.CallOpt
 	return out, nil
 }
 
-func (c *nodeClient) HandleListener(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ListenerReq, Update], error) {
+func (c *nodeClient) WatchDocument(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[WatchReq, Update], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Node_ServiceDesc.Streams[0], Node_HandleListener_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Node_ServiceDesc.Streams[0], Node_WatchDocument_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ListenerReq, Update]{ClientStream: stream}
+	x := &grpc.GenericClientStream[WatchReq, Update]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Node_HandleListenerClient = grpc.BidiStreamingClient[ListenerReq, Update]
+type Node_WatchDocumentClient = grpc.BidiStreamingClient[WatchReq, Update]
 
 // NodeServer is the server API for Node service.
 // All implementations must embed UnimplementedNodeServer
@@ -93,7 +93,7 @@ type NodeServer interface {
 	Share(context.Context, *ShareReq) (*ShareReply, error)
 	Delete(context.Context, *DeleteReq) (*DeleteReply, error)
 	Edit(context.Context, *EditReq) (*Ack, error)
-	HandleListener(grpc.BidiStreamingServer[ListenerReq, Update]) error
+	WatchDocument(grpc.BidiStreamingServer[WatchReq, Update]) error
 	mustEmbedUnimplementedNodeServer()
 }
 
@@ -113,8 +113,8 @@ func (UnimplementedNodeServer) Delete(context.Context, *DeleteReq) (*DeleteReply
 func (UnimplementedNodeServer) Edit(context.Context, *EditReq) (*Ack, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Edit not implemented")
 }
-func (UnimplementedNodeServer) HandleListener(grpc.BidiStreamingServer[ListenerReq, Update]) error {
-	return status.Errorf(codes.Unimplemented, "method HandleListener not implemented")
+func (UnimplementedNodeServer) WatchDocument(grpc.BidiStreamingServer[WatchReq, Update]) error {
+	return status.Errorf(codes.Unimplemented, "method WatchDocument not implemented")
 }
 func (UnimplementedNodeServer) mustEmbedUnimplementedNodeServer() {}
 func (UnimplementedNodeServer) testEmbeddedByValue()              {}
@@ -191,12 +191,12 @@ func _Node_Edit_Handler(srv interface{}, ctx context.Context, dec func(interface
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Node_HandleListener_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(NodeServer).HandleListener(&grpc.GenericServerStream[ListenerReq, Update]{ServerStream: stream})
+func _Node_WatchDocument_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(NodeServer).WatchDocument(&grpc.GenericServerStream[WatchReq, Update]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Node_HandleListenerServer = grpc.BidiStreamingServer[ListenerReq, Update]
+type Node_WatchDocumentServer = grpc.BidiStreamingServer[WatchReq, Update]
 
 // Node_ServiceDesc is the grpc.ServiceDesc for Node service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -220,8 +220,8 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "HandleListener",
-			Handler:       _Node_HandleListener_Handler,
+			StreamName:    "WatchDocument",
+			Handler:       _Node_WatchDocument_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

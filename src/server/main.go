@@ -53,7 +53,7 @@ func main() {
 		log.Fatalf("failed to start raft: %v", error)
 	}
 	server := grpc.NewServer()
-	editorpb.RegisterNodeServer(server, node.NewNode(raft, *state))
+	editorpb.RegisterNodeServer(server, node.NewNode(raft, state))
 	transportManager.Register(server)
 	leaderHealth.Setup(raft, server, []string{"Example"})
 	raftAdmin.Register(server, raft)

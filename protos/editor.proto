@@ -8,7 +8,7 @@ service Node {
   rpc Share(ShareReq) returns (ShareReply) {}
   rpc Delete(DeleteReq) returns (DeleteReply) {}
   rpc Edit(EditReq) returns (Ack) {}
-  rpc HandleListener(stream ListenerReq) returns (stream Update) {}
+  rpc WatchDocument(stream WatchReq) returns (stream Update) {}
 }
 
 message ShareReq {
@@ -30,6 +30,7 @@ message EditReq {
   int32 rev = 2;
   repeated Op ops = 3;
   string user_id = 4;
+  string title = 5;
 }
 
 message Ack {}
@@ -39,9 +40,14 @@ message Op {
   string s = 2;
 }
 
-message ListenerReq {
+message WatchReq {
   string doc_id = 1;
   string user_id = 2;
 }
 
-message Update { repeated Op ops = 1; }
+message Update {
+  repeated Op ops = 1;
+  bytes doc = 2;
+  int32 rev = 3;
+  string title = 4;
+}

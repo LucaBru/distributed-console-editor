@@ -1,6 +1,8 @@
 package serror
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type InternalError struct {
 	Err error
@@ -17,17 +19,16 @@ func (e *SharedDocNotFound) Error() string {
 }
 
 type InvalidReqError struct {
-	spec string
-}
-
-func (e *InvalidReqError) Error() string {
-	return fmt.Sprintf("Invalid request: %s", e.spec)
-}
-
-type DocIdError struct {
 	Err error
 }
 
+func (e *InvalidReqError) Error() string {
+	return fmt.Sprintf("Invalid request: %s", e.Err)
+}
+
+type DocIdError struct {
+}
+
 func (e *DocIdError) Error() string {
-	return fmt.Sprintf("Request doc id is invalid: %w", e.Err)
+	return fmt.Sprintf("Request doc id is invalid")
 }

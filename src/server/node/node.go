@@ -3,9 +3,8 @@ package node
 import (
 	"context"
 	serror "editor-service/errors"
-	"editor-service/node/ot"
 	"editor-service/protos/editorpb"
-	"editor-service/protos/logpb"
+	"editor-service/protos/rlogpb"
 	"fmt"
 	"io"
 	"time"
@@ -22,94 +21,82 @@ type Node struct {
 	state *State
 }
 
-func NewNode(r *raft.Raft, s State) *Node {
+func NewNode(r *raft.Raft, s *State) *Node {
 	return &Node{
 		Raft:  r,
-		state: &s,
+		state: s,
 	}
 }
 
 func (n *Node) Share(ctx context.Context, req *editorpb.ShareReq) (*editorpb.ShareReply, error) {
-	log := &logpb.Log{Cmd: &logpb.Log_Share{Share: &logpb.Share{DocName: req.DocName, Doc: req.Doc, DocId: uuid.NewString()}}}
-	return Apply[editorpb.ShareReply](n, log)
+	docId := uuid.NewString()
+	log := &rlogpb.Log{Cmd: &rlogpb.Log_Share{Share: &rlogpb.Share{DocName: req.DocName, Doc: req.Doc, DocId: docId}}}
+	err := n.replicateLog(log)
+	if err != nil {
+		return nil, err
+	}
+	return &editorpb.ShareReply{DocId: docId}, nil
 }
 
 func (n *Node) Delete(ctx context.Context, req *editorpb.DeleteReq) (*editorpb.DeleteReply, error) {
-	log := &logpb.Log{Cmd: &logpb.Log_Delete{Delete: &logpb.Delete{DocId: req.DocId, UserId: req.UserId}}}
-	return Apply[editorpb.DeleteReply](n, log)
+	log := &rlogpb.Log{Cmd: &rlogpb.Log_Delete{Delete: &rlogpb.Delete{DocId: req.DocId, UserId: req.UserId}}}
+	err := n.replicateLog(log)
+	if err != nil {
+		return nil, err
+	}
+	return &editorpb.DeleteReply{}, nil
 }
 
 func (n *Node) Edit(ctx context.Context, req *editorpb.EditReq) (*editorpb.Ack, error) {
-	log := &logpb.Log{Cmd: &logpb.Log_Edit{Edit: &logpb.Edit{DocId: req.DocId, Rev: req.Rev, Ops: req.Ops, UserId: req.UserId}}}
-	return Apply[editorpb.Ack](n, log)
+	log := &rlogpb.Log{Cmd: &rlogpb.Log_Edit{Edit: &rlogpb.Edit{DocId: req.DocId, Rev: req.Rev, Ops: req.Ops, UserId: req.UserId, Title: req.Title}}}
+	err := n.replicateLog(log)
+	if err != nil {
+		return nil, err
+	}
+	return &editorpb.Ack{}, nil
 }
 
-func Apply[R any](n *Node, log *logpb.Log) (*R, error) {
+func (n *Node) replicateLog(log *rlogpb.Log) error {
 	b, err := proto.Marshal(log)
 	if err != nil {
-		return nil, &serror.InternalError{Err: fmt.Errorf("Log marshal failed: %w", err)}
+		return &serror.InternalError{Err: fmt.Errorf("Log marshal failed: %w", err)}
 	}
 	f := n.Raft.Apply(b, time.Second)
 	if err := f.Error(); err != nil {
-		return nil, rafterrors.MarkRetriable(&serror.InternalError{Err: err})
+		return rafterrors.MarkRetriable(&serror.InternalError{Err: err})
 	}
 	iReply := f.Response()
 	err, ok := iReply.(error)
 	if ok {
-		return nil, err
-	}
-	reply, ok := iReply.(*R)
-	if ok {
-		return reply, nil
-	}
-	return nil, &serror.InternalError{Err: fmt.Errorf("FSM response into %T conversion failed", reply)}
-}
-
-func (n *Node) HandleListener(stream editorpb.Node_HandleListenerServer) error {
-	reqCh := make(chan *editorpb.ListenerReq)
-	errCh := make(chan error)
-	go func(stream *editorpb.Node_HandleListenerServer, reqCh chan<- *editorpb.ListenerReq, errCh chan<- error) {
-		req, err := (*stream).Recv()
-		if err == io.EOF {
-			errCh <- nil
-			return
-		}
-		if err != nil {
-			errCh <- err
-			return
-		}
-		reqCh <- req
-	}(&stream, reqCh, errCh)
-
-	listenUpdates := make(chan ot.Ops, 20)
-	var req *editorpb.ListenerReq
-	select {
-	case req = <-reqCh:
-		{
-			err := n.state.SubListener(req, listenUpdates)
-			if err != nil {
-				return err
-			}
-		}
-	case err := <-errCh:
 		return err
 	}
+	return nil
+}
+
+func (n *Node) WatchDocument(stream editorpb.Node_WatchDocumentServer) error {
+
+	req, err := stream.Recv()
+	if err == io.EOF {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	recvUpdate, doc, title, rev, err := n.state.SubListener(req)
+	if err != nil {
+		return err
+	}
+	fmt.Println("%s watch document %s", req.UserId, req.DocId)
+	stream.Send(&editorpb.Update{Doc: doc, Rev: int32(rev), Title: title})
 
 	for {
-		select {
-		case req := <-reqCh:
-			return n.state.UnsubListener(req)
-
-		case err := <-errCh:
-			{
-				n.state.UnsubListener(req)
-				return err
-			}
-		case ops, ok := <-listenUpdates:
-			stream.Send(&editorpb.Update{Ops: ops.WireFmt()})
-			if !ok {
-				return fmt.Errorf("Document you were listening to has been deleted")
-			}
+		update, ok := <-recvUpdate
+		err := stream.Send(&editorpb.Update{Ops: update.Ops.WireFmt(), Title: update.Title})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
 		}
 	}
 }

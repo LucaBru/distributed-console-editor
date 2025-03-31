@@ -2,12 +2,12 @@ package node
 
 import (
 	serror "editor-service/errors"
-	rlog "editor-service/node/log"
 	"editor-service/node/ot"
 	"editor-service/protos/editorpb"
-	"editor-service/protos/logpb"
+	"editor-service/protos/rlogpb"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/raft"
@@ -15,171 +15,97 @@ import (
 )
 
 type State struct {
-	docs            map[DocId]*ot.SharedDoc
-	shareDocCh      chan<- *rlog.ShareLog
-	delDocCh        chan<- *rlog.DeleteLog
-	editCh          chan<- *rlog.EditLog
-	subListenerCh   chan<- *ListenerReq
-	unsubListenerCh chan<- *ListenerReq
+	sync.RWMutex
+	docs map[DocId]*ot.SharedDoc
 }
 
 type DocId = uuid.UUID
 
-type ShareLogResult = rlog.LogResult[*DocId]
-type DelLogResult = rlog.LogResult[*struct{}]
-type EditLogResult = rlog.LogResult[*struct{}]
-
-type ListenerReq struct {
-	docId     DocId
-	userId    string
-	stateCh   chan error
-	updatesCh chan<- ot.Ops
-}
-
 func NewState() *State {
-	shareCh := make(chan *rlog.ShareLog, 50)
-	delCh := make(chan *rlog.DeleteLog, 50)
-	editCh := make(chan *rlog.EditLog, 200)
-	subCh := make(chan *ListenerReq, 50)
-	unsubCh := make(chan *ListenerReq, 50)
-	docs := make(map[DocId]*ot.SharedDoc)
-	s := &State{docs: docs, shareDocCh: shareCh, delDocCh: delCh, editCh: editCh, subListenerCh: subCh, unsubListenerCh: unsubCh}
-	go s.run(shareCh, delCh, editCh, subCh, unsubCh)
-	return s
+	return &State{docs: make(map[DocId]*ot.SharedDoc)}
 }
 
-func (s *State) run(shareCh <-chan *rlog.ShareLog, delCh <-chan *rlog.DeleteLog, editCh <-chan *rlog.EditLog, subCh <-chan *ListenerReq, unsubCh <-chan *ListenerReq) {
-	for {
-		select {
-		case req := <-shareCh:
-			{
-				uid, _ := uuid.Parse(req.Cmd.DocId)
-				docCh := make(chan *rlog.EditLog, 100)
-				s.docs[uid] = ot.NewSharedDoc(req.Cmd.DocName, req.Cmd.Doc, docCh)
-				req.StateCh <- &ShareLogResult{Msg: &uid}
-			}
-		case del := <-delCh:
-			{
-				uid, err := uuid.Parse(del.Cmd.DocId)
-				if err != nil {
-					del.StateCh <- &DelLogResult{Err: &serror.DocIdError{Err: err}}
-					break
-				}
-				doc := s.docs[uid]
-				close(doc.EditCh)
-				for _, listener := range doc.Listeners {
-					close(listener)
-				}
-				delete(s.docs, uid)
-				del.StateCh <- &DelLogResult{Err: nil}
-			}
-		case req := <-editCh:
-			{
-				uid, err := uuid.Parse(req.Cmd.DocId)
-				if err != nil {
-					req.StateCh <- &DelLogResult{Err: &serror.DocIdError{Err: err}}
-					break
-				}
-				editCh := s.docs[uid].EditCh
-				if editCh == nil {
-					req.StateCh <- &DelLogResult{Err: &serror.SharedDocNotFound{}}
-					break
-				}
-				editCh <- req
-				req.StateCh <- &EditLogResult{}
-			}
-		case req := <-subCh:
-			{
-				doc := s.docs[req.docId]
-				if doc == nil {
-					req.stateCh <- &serror.SharedDocNotFound{}
-					break
-				}
-				doc.Listeners[req.userId] = req.updatesCh
-				req.stateCh <- nil
-			}
-		case req := <-unsubCh:
-			{
-				doc := s.docs[req.docId]
-				if doc == nil {
-					req.stateCh <- &serror.SharedDocNotFound{}
-					break
-				}
-				delete(doc.Listeners, req.userId)
-				req.stateCh <- nil
-			}
-		}
-	}
+func (s *State) shareDoc(l *rlogpb.Share) {
+	uid, _ := uuid.Parse(l.DocId)
+	s.Lock()
+	defer s.Unlock()
+	s.docs[uid] = ot.NewSharedDoc(l.DocName, l.Doc, l.UserId)
 }
 
-func (s *State) Apply(l *raft.Log) interface{} {
-	cmd := &logpb.Log{}
-	err := proto.Unmarshal(l.Data, cmd)
+func (s *State) deleteDoc(l *rlogpb.Delete) error {
+	uid, err := uuid.Parse(l.DocId)
 	if err != nil {
-		return fmt.Errorf("Log unmarshal failed: %w", err)
+		return &serror.DocIdError{}
 	}
-	switch c := cmd.Cmd.(type) {
-	case *logpb.Log_Share:
-		{
-			sync := make(chan *ShareLogResult)
-			entry := &rlog.ShareLog{StateCh: sync, Cmd: c.Share}
-			s.shareDocCh <- entry
-			res := <-sync
-			if res.Err != nil {
-				return res.Err
-			}
-			return &editorpb.ShareReply{DocId: res.Msg.String()}
-		}
-	case *logpb.Log_Delete:
-		{
-			sync := make(chan *DelLogResult)
-			entry := &rlog.DeleteLog{StateCh: sync, Cmd: c.Delete}
-			s.delDocCh <- entry
-			res := <-sync
-			if res.Err != nil {
-				return res.Err
-			}
-			return &editorpb.DeleteReply{}
-		}
-	case *logpb.Log_Edit:
-		{
-			sync := make(chan *EditLogResult)
-			entry := &rlog.EditLog{StateCh: sync, Cmd: c.Edit}
-			s.editCh <- entry
-			res := <-sync
-			if res.Err != nil {
-				return fmt.Errorf("Failed to modify the document: %w", err)
-			}
-			return &editorpb.Ack{}
-		}
+	s.Lock()
+	defer s.Unlock()
+	doc := s.docs[uid]
+	if doc == nil {
+		return &serror.SharedDocNotFound{}
+	}
+	doc.Delete()
+	delete(s.docs, uid)
+	return nil
+}
+
+func (s *State) editDoc(l *rlogpb.Edit) error {
+	uid, err := uuid.Parse(l.DocId)
+	if err != nil {
+		return &serror.DocIdError{}
+	}
+	s.Lock()
+	defer s.Unlock()
+	doc := s.docs[uid]
+	if doc == nil {
+		return &serror.SharedDocNotFound{}
+	}
+	err = doc.Edit(int(l.Rev), ot.NewOps(l.Ops), l.UserId, l.Title)
+	if err != nil {
+		return &serror.InternalError{Err: err}
 	}
 	return nil
 }
 
-func (s *State) SubListener(req *editorpb.ListenerReq, updatesCh chan<- ot.Ops) error {
-	uid, err := uuid.Parse(req.DocId)
+func (s *State) Apply(l *raft.Log) interface{} {
+	cmd := &rlogpb.Log{}
+	err := proto.Unmarshal(l.Data, cmd)
 	if err != nil {
-		return &serror.DocIdError{Err: err}
+		return serror.InternalError{Err: fmt.Errorf("Log unmarshal failed: %w", err)}
 	}
-	sync := make(chan error)
-	subReq := &ListenerReq{
-		docId: uid, userId: req.UserId, stateCh: sync, updatesCh: updatesCh,
+	switch l := cmd.Cmd.(type) {
+	case *rlogpb.Log_Share:
+		{
+			s.shareDoc(l.Share)
+			return nil
+		}
+	case *rlogpb.Log_Delete:
+		return s.deleteDoc(l.Delete)
+	case *rlogpb.Log_Edit:
+		return s.editDoc(l.Edit)
+	default:
+		return nil
 	}
-	s.subListenerCh <- subReq
-	return <-sync
 }
 
-func (s *State) UnsubListener(req *editorpb.ListenerReq) error {
+func (s *State) SubListener(req *editorpb.WatchReq) (<-chan ot.Update, []byte, string, int, error) {
 	uid, err := uuid.Parse(req.DocId)
-	if err != nil {
-		return &serror.DocIdError{Err: err}
+	s.RLock()
+	defer s.RUnlock()
+	if err != nil || s.docs[uid] == nil {
+		return nil, nil, "", 0, &serror.DocIdError{}
 	}
-	sync := make(chan error)
-	unsubReq := &ListenerReq{
-		docId: uid, userId: req.UserId, stateCh: sync,
+	recvUpdate, docContent, title, rev := s.docs[uid].AddListener(req.UserId)
+	return recvUpdate, docContent, title, rev, nil
+}
+
+func (s *State) UnsubListener(req *editorpb.WatchReq) error {
+	uid, err := uuid.Parse(req.DocId)
+	s.RLock()
+	defer s.RUnlock()
+	if err != nil || s.docs[uid] == nil {
+		return &serror.DocIdError{}
 	}
-	s.unsubListenerCh <- unsubReq
-	return <-sync
+	return s.docs[uid].DeleteListener(req.UserId)
 }
 
 func (s *State) Snapshot() (raft.FSMSnapshot, error) {

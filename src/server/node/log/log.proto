@@ -31,4 +31,5 @@ message Edit {
   int32 rev = 2;
   repeated editor.Op ops = 3;
   string user_id = 4;
+  string title = 5;
 }

@@ -21,7 +21,6 @@ import (
 func main() {
 	var aliceDoc ot.Doc
 	aliceDoc = []byte("Hello")
-	bobDoc := aliceDoc
 	aliceConn := clientConn("Alice")
 	alice := editorpb.NewNodeClient(aliceConn)
 	msg, err := alice.Share(context.Background(), &editorpb.ShareReq{DocName: "Thesis", Doc: aliceDoc, UserId: "user@mail.com"})
@@ -30,8 +29,11 @@ func main() {
 	}
 	thesisId := msg.DocId
 	fmt.Printf("Successfully added new shared doc 'Thesis' with id %s\n", thesisId)
-	aliceStream, _ := alice.HandleListener(context.Background())
-	aliceStream.Send(&editorpb.ListenerReq{DocId: thesisId, UserId: "Alice"})
+	aliceStream, _ := alice.WatchDocument(context.Background())
+	aliceStream.Send(&editorpb.WatchReq{DocId: thesisId, UserId: "user@mail.com"})
+	aliceStream.Recv()
+	fmt.Println("Ciao")
+	aliceStream.Send(&editorpb.WatchReq{DocId: thesisId, UserId: "Alice"})
 	waitAlice := make(chan struct{})
 	go func() {
 		for {
@@ -51,8 +53,12 @@ func main() {
 
 	bobConn := clientConn("Bob")
 	bob := editorpb.NewNodeClient(bobConn)
-	bobStream, _ := bob.HandleListener(context.Background())
-	bobStream.Send(&editorpb.ListenerReq{DocId: thesisId, UserId: "Bob"})
+	bobStream, _ := bob.WatchDocument(context.Background())
+	bobStream.Send(&editorpb.WatchReq{DocId: thesisId, UserId: "Bob"})
+	snap, err := bobStream.Recv()
+	var bobDoc ot.Doc
+	bobDoc = snap.Doc
+	bobRev := snap.Rev
 	waitBob := make(chan struct{})
 	go func() {
 		for {
@@ -72,7 +78,7 @@ func main() {
 	ops := []*editorpb.Op{&editorpb.Op{N: 5}, &editorpb.Op{N: 0, S: " World!"}}
 	bobDoc.Apply(ot.NewOps(ops))
 	fmt.Printf("Bob update his local doc to %s\n", string(bobDoc))
-	_, err = bob.Edit(context.Background(), &editorpb.EditReq{DocId: thesisId, Rev: 0, Ops: ops, UserId: "Bob"})
+	_, err = bob.Edit(context.Background(), &editorpb.EditReq{DocId: thesisId, Rev: bobRev, Ops: ops, UserId: "Bob"})
 	if err != nil {
 		fmt.Errorf("Error from the server %s", err)
 	}

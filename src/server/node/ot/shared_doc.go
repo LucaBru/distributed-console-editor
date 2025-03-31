@@ -1,53 +1,65 @@
 package ot
 
 import (
-	rlog "editor-service/node/log"
 	"fmt"
 	"sync"
 )
 
-// SharedDoc represents shared document with revision history.
 type SharedDoc struct {
 	sync.RWMutex
-	name      string
-	creator   string
+	title     string
+	author    string
 	doc       Doc
 	history   []Ops
-	Listeners map[string]chan<- Ops
+	listeners map[string]chan<- Update
 }
 
-func NewSharedDoc(name string, doc []byte, ch chan *rlog.EditLog) *SharedDoc {
+func NewSharedDoc(title string, doc []byte, author string) *SharedDoc {
 	d := &SharedDoc{
 		doc:       doc,
-		Listeners: make(map[string]chan<- Ops),
+		title:     title,
+		author:    author,
+		listeners: make(map[string]chan<- Update),
 	}
 	return d
 }
 
-func (d *SharedDoc) AddListener(listenerId string, ch chan<- Ops) {
+func (d *SharedDoc) AddListener(listenerId string) (<-chan Update, []byte, string, int) {
+	sendUpdate := make(chan Update)
 	d.Lock()
 	defer d.Unlock()
-	d.Listeners[listenerId] = ch
+	d.listeners[listenerId] = sendUpdate
+	return sendUpdate, d.doc, d.title, len(d.history)
 }
 
-func (d *SharedDoc) DeleteListener(listenerId string) {
+func (d *SharedDoc) DeleteListener(listenerId string) error {
 	d.Lock()
 	defer d.Unlock()
-	delete(d.Listeners, listenerId)
+	if d.listeners[listenerId] == nil {
+		return fmt.Errorf("Listener id not found")
+	}
+	close(d.listeners[listenerId])
+	delete(d.listeners, listenerId)
+	return nil
 }
 
-func (d *SharedDoc) Edit(log *rlog.EditLog) (Ops, error) {
-	rev := int(log.Cmd.Rev)
-	ops := NewOps(log.Cmd.Ops)
+func (d *SharedDoc) Delete() {
+	d.Lock()
+	defer d.Unlock()
+	for _, ch := range d.listeners {
+		close(ch)
+	}
+}
 
+func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error {
 	if rev < 0 || len(d.history) < rev {
-		return nil, fmt.Errorf("Revision not in history")
+		return fmt.Errorf("Revision not in history")
 	}
 
 	var err error
 	for _, other := range d.history[rev:] {
 		if ops, _, err = Transform(ops, other); err != nil {
-			return nil, fmt.Errorf("Operations transformation failed: %w", err)
+			return fmt.Errorf("Operations transformation failed: %w", err)
 		}
 	}
 
@@ -56,17 +68,26 @@ func (d *SharedDoc) Edit(log *rlog.EditLog) (Ops, error) {
 	d.Lock()
 	defer d.Unlock()
 	if err = d.doc.Apply(ops); err != nil {
-		return nil, fmt.Errorf("Operations application failed: %w", err)
+		return fmt.Errorf("Operations application failed: %w", err)
 	}
 	fmt.Printf(fmt.Sprintf("Shared doc was updated from '%s' to '%s\n'", string(old), string(d.doc)))
 	d.history = append(d.history, ops)
 
 	// notify all the collaborators with new ops
-	for userId, collaborator := range d.Listeners {
-		if userId != log.Cmd.UserId {
-			collaborator <- ops
+	for id, ch := range d.listeners {
+		if id != authorId {
+			ch <- Update{Ops: ops, Title: d.title}
 		}
 	}
 
-	return ops, nil
+	if title != "" && title != d.title {
+		d.title = title
+	}
+
+	return nil
+}
+
+type Update struct {
+	Ops   Ops
+	Title string
 }

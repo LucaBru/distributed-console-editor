@@ -1,6 +1,7 @@
 package ot
 
 import (
+	"editor-service/protos/editorpb"
 	"fmt"
 	"sync"
 )
@@ -22,6 +23,16 @@ func NewSharedDoc(title string, doc []byte, author string) *SharedDoc {
 		listeners: make(map[string]chan<- Update),
 	}
 	return d
+}
+
+func (d *SharedDoc) Clone() *SharedDoc {
+	return &SharedDoc{
+		title:     d.title,
+		author:    d.author,
+		doc:       d.doc,
+		history:   d.history,
+		listeners: make(map[string]chan<- Update),
+	}
 }
 
 func (d *SharedDoc) AddListener(listenerId string) (<-chan Update, []byte, string, int) {
@@ -90,4 +101,13 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 type Update struct {
 	Ops   Ops
 	Title string
+}
+
+func (s *SharedDoc) ToProtoMsg() *editorpb.Doc {
+	return &editorpb.Doc{
+		Title:   s.title,
+		Author:  s.author,
+		Content: s.doc,
+		Rev:     int32(len(s.history)),
+	}
 }

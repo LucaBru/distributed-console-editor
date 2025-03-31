@@ -51,3 +51,12 @@ message Update {
   int32 rev = 3;
   string title = 4;
 }
+
+message Doc {
+  string title = 1;
+  string author = 2;
+  bytes content = 3;
+  int32 rev = 4;
+}
+
+message Docs { map<string, Doc> docs = 1; }

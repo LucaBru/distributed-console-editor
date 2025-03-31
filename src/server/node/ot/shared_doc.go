@@ -73,15 +73,15 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 	fmt.Printf(fmt.Sprintf("Shared doc was updated from '%s' to '%s\n'", string(old), string(d.doc)))
 	d.history = append(d.history, ops)
 
+	if title != "" && title != d.title {
+		d.title = title
+	}
+
 	// notify all the collaborators with new ops
 	for id, ch := range d.listeners {
 		if id != authorId {
 			ch <- Update{Ops: ops, Title: d.title}
 		}
-	}
-
-	if title != "" && title != d.title {
-		d.title = title
 	}
 
 	return nil

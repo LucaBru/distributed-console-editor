@@ -35,13 +35,13 @@ func (s *State) shareDoc(l *rlogpb.Share) {
 func (s *State) deleteDoc(l *rlogpb.Delete) error {
 	uid, err := uuid.Parse(l.DocId)
 	if err != nil {
-		return &serror.DocIdError{}
+		return serror.NewInvalidReqError(err)
 	}
 	s.Lock()
 	defer s.Unlock()
 	doc := s.docs[uid]
 	if doc == nil {
-		return &serror.SharedDocNotFound{}
+		return serror.NewInvalidReqError(fmt.Errorf("doc with id %s not found", uid))
 	}
 	doc.Delete()
 	delete(s.docs, uid)
@@ -51,17 +51,17 @@ func (s *State) deleteDoc(l *rlogpb.Delete) error {
 func (s *State) editDoc(l *rlogpb.Edit) error {
 	uid, err := uuid.Parse(l.DocId)
 	if err != nil {
-		return &serror.DocIdError{}
+		return serror.NewInvalidReqError(err)
 	}
 	s.Lock()
 	defer s.Unlock()
 	doc := s.docs[uid]
 	if doc == nil {
-		return &serror.SharedDocNotFound{}
+		return serror.NewInvalidReqError(fmt.Errorf("doc with id %s not found", uid))
 	}
 	err = doc.Edit(int(l.Rev), ot.NewOps(l.Ops), l.UserId, l.Title)
 	if err != nil {
-		return &serror.InternalError{Err: err}
+		return serror.NewInternalError(err)
 	}
 	return nil
 }
@@ -70,7 +70,7 @@ func (s *State) Apply(l *raft.Log) interface{} {
 	cmd := &rlogpb.Log{}
 	err := proto.Unmarshal(l.Data, cmd)
 	if err != nil {
-		return serror.InternalError{Err: fmt.Errorf("Log unmarshal failed: %w", err)}
+		return serror.InternalError(fmt.Errorf("Log unmarshal failed: %w", err))
 	}
 	switch l := cmd.Cmd.(type) {
 	case *rlogpb.Log_Share:
@@ -92,7 +92,7 @@ func (s *State) SubListener(req *editorpb.WatchReq) (<-chan ot.Update, []byte, s
 	s.RLock()
 	defer s.RUnlock()
 	if err != nil || s.docs[uid] == nil {
-		return nil, nil, "", 0, &serror.DocIdError{}
+		return nil, nil, "", 0, serror.NewInvalidReqError(err)
 	}
 	recvUpdate, docContent, title, rev := s.docs[uid].AddListener(req.UserId)
 	return recvUpdate, docContent, title, rev, nil
@@ -103,7 +103,7 @@ func (s *State) UnsubListener(req *editorpb.WatchReq) error {
 	s.RLock()
 	defer s.RUnlock()
 	if err != nil || s.docs[uid] == nil {
-		return &serror.DocIdError{}
+		return serror.NewInvalidReqError(err)
 	}
 	return s.docs[uid].DeleteListener(req.UserId)
 }

@@ -5,7 +5,6 @@ import (
 	serror "editor-service/errors"
 	"editor-service/protos/editorpb"
 	"editor-service/protos/rlogpb"
-	"fmt"
 	"io"
 	"time"
 
@@ -59,14 +58,14 @@ func (n *Node) Edit(ctx context.Context, req *editorpb.EditReq) (*editorpb.Ack, 
 func (n *Node) replicateLog(log *rlogpb.Log) error {
 	b, err := proto.Marshal(log)
 	if err != nil {
-		return &serror.InternalError{Err: fmt.Errorf("Log marshal failed: %w", err)}
+		return serror.NewInternalError(err)
 	}
 	f := n.Raft.Apply(b, time.Second)
 	if err := f.Error(); err != nil {
-		return rafterrors.MarkRetriable(&serror.InternalError{Err: err})
+		return rafterrors.MarkRetriable(serror.NewInternalError(err))
 	}
-	iReply := f.Response()
-	err, ok := iReply.(error)
+	reply := f.Response()
+	err, ok := reply.(error)
 	if ok {
 		return err
 	}
@@ -86,7 +85,6 @@ func (n *Node) WatchDocument(stream editorpb.Node_WatchDocumentServer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("%s watch document %s", req.UserId, req.DocId)
 	stream.Send(&editorpb.Update{Doc: doc, Rev: int32(rev), Title: title})
 
 	for {

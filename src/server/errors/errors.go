@@ -1,33 +1,16 @@
 package serror
 
-import "fmt"
+import (
+	"fmt"
+)
 
-type InternalError struct {
-	Err error
-}
+type InternalError error
 
-func (e *InternalError) Error() string {
-	return fmt.Sprintf("Internal error: %w", e.Err)
-}
+var NewInternalError = func(err error) error { return fmt.Errorf("Internal error: %w", err) }
 
-type SharedDocNotFound struct{}
+type InvalidReqError error
 
-func (e *SharedDocNotFound) Error() string {
-	return "Shared document not found"
-}
+var NewInvalidReqError = func(err error) error {
+	return fmt.Errorf("Invalid request: %w", err)
 
-type InvalidReqError struct {
-	spec string
-}
-
-func (e *InvalidReqError) Error() string {
-	return fmt.Sprintf("Invalid request: %s", e.spec)
-}
-
-type DocIdError struct {
-	Err error
-}
-
-func (e *DocIdError) Error() string {
-	return fmt.Sprintf("Request doc id is invalid: %w", e.Err)
 }

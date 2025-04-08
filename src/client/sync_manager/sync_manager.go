@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	_ "github.com/Jille/grpc-multi-resolver"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -55,7 +56,10 @@ func initConnection() *grpc.ClientConn {
 
 func (syncManager *SyncManager) startUpdateListener() {
 	stream, err := syncManager.node.WatchDocument(context.Background())
-	fmt.Println(err.Error())
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
 	stream.Send(&editorpb.WatchReq{DocId: syncManager.DocConfig.docId, UserId: syncManager.DocConfig.authorId})
 	docSnapshot, _ := stream.Recv()
 	syncManager.DocConfig.title = docSnapshot.Title

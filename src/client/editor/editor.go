@@ -1,12 +1,14 @@
 package editor
 
 import (
+	"client/sync_manager"
+	"editor-service/node/ot"
+	"editor-service/protos/editorpb"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/nsf/termbox-go"
-	"google.golang.org/grpc"
 )
 
 type Editor struct {
@@ -21,7 +23,8 @@ type Editor struct {
 	foregroundColor       termbox.Attribute
 	statusBackgroundColor termbox.Attribute
 	statusForegroundColor termbox.Attribute
-	connectionManager *grpc.ClientConn
+	syncManager           sync_manager.SyncManager
+	operations            []*editorpb.Op
 }
 
 func NewEditor() *Editor {
@@ -31,13 +34,18 @@ func NewEditor() *Editor {
 		foregroundColor:       termbox.ColorDefault,
 		statusBackgroundColor: termbox.ColorBlack,
 		statusForegroundColor: termbox.ColorWhite,
-		filename: "untitled.txt",
-		cursor: *newCursor(),
+		filename:              "untitled.txt",
+		cursor:                *newCursor(),
+		syncManager:           *sync_manager.NewSyncManager(sync_manager.NewDocumentConfig("0108", "Enrico Z", 1, "Testing 1", ot.Doc{})),
+		operations: 		   []*editorpb.Op{},
 	}
 }
 
 // Draw editor content to the terminal
 func (editor *Editor) Draw() {
+	// We update other nodes
+	editor.updateRemoteEditors()
+
 	// We clear the current text on the screen
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 	width, height := termbox.Size()
@@ -47,6 +55,10 @@ func (editor *Editor) Draw() {
 
 	termbox.SetCursor(editor.cursor.x-editor.offsetX, editor.cursor.y-editor.offsetY)
 	termbox.Flush()
+}
+
+func (editor *Editor) updateRemoteEditors() {
+	editor.syncManager.SendData(editor.operations)
 }
 
 func (editor *Editor) drawText(width int, height int) {
@@ -100,11 +112,13 @@ func (editor *Editor) insertRune(char rune) {
 		// If cursor is over the end of the current line we insert some spaces to fill the void
 		for i := len(line); i < editor.cursor.x; i++ {
 			line = append(line, ' ')
+			editor.operations = append(editor.operations, &editorpb.Op{N: 0, S: " "})
 		}
 	}
 
 	// Now we can insert the character
 	line = append(line[:editor.cursor.x], append([]rune{char}, line[editor.cursor.x:]...)...)
+	editor.operations = append(editor.operations, &editorpb.Op{N: 0, S: string(char)})
 	if len(line) > width {
 		// In this case since we are writing over the available space we scroll horizontally
 		editor.offsetX++
@@ -138,6 +152,7 @@ func (editor *Editor) insertNewline() {
 			editor.buffer[:editor.cursor.y+1],
 			append([]string{afterCursor}, editor.buffer[editor.cursor.y+1:]...)...,
 		)
+		editor.operations = append(editor.operations, &editorpb.Op{N: 0, S: "\n"})
 	}
 
 	editor.cursor.moveDown()
@@ -171,6 +186,7 @@ func (editor *Editor) deleteChar() {
 			editor.cursor.goToTheEndOfPreviousLine(prevLineLen)
 		}
 	}
+	editor.operations = append(editor.operations, &editorpb.Op{N: -1})
 
 	editor.modified = true
 }
@@ -208,7 +224,7 @@ func (editor *Editor) scrollLeft() {
 
 func (editor *Editor) scrollUp() {
 	if editor.offsetY > 0 && editor.cursor.y > 0 {
-		editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y - 1]))
+		editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y-1]))
 		editor.offsetY--
 	}
 }

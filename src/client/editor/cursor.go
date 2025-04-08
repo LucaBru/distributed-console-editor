@@ -14,7 +14,7 @@ func newCursor() *Cursor {
 
 func (cursor *Cursor) moveUp() {
 	if cursor.y > 0 {
-		cursor.y --
+		cursor.y--
 	}
 }
 
@@ -27,7 +27,7 @@ func (cursor *Cursor) moveRight() {
 }
 
 func (cursor *Cursor) moveLeft() {
-	if (cursor.x > 0) {
+	if cursor.x > 0 {
 		cursor.x--
 	}
 }

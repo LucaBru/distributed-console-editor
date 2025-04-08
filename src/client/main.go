@@ -1,13 +1,13 @@
 package main
 
 import (
-	"log"
 	"client/editor"
+	"log"
 
 	"github.com/nsf/termbox-go"
 )
 
-var(
+var (
 	logger = log.Default()
 )
 
@@ -17,7 +17,7 @@ func main() {
 		panic("Termbox init failed")
 	}
 	defer termbox.Close()
-	
+
 	// This input mode recognize escape characters
 	termbox.SetInputMode(termbox.InputEsc)
 

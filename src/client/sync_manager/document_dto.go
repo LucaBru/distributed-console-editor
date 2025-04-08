@@ -7,7 +7,7 @@ type DocumentConfig struct {
 	authorId string
 	version  int
 	title    string
-	document ot.Doc
+	Document ot.Doc
 }
 
 func NewDocumentConfig(docId string, authorId string, version int, title string, document ot.Doc) DocumentConfig {
@@ -16,6 +16,6 @@ func NewDocumentConfig(docId string, authorId string, version int, title string,
 		authorId: authorId,
 		version:  version,
 		title:    title,
-		document: document,
+		Document: document,
 	}
 }

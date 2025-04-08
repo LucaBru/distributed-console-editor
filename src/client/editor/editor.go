@@ -46,6 +46,21 @@ func (editor *Editor) Draw() {
 	// We update other nodes
 	editor.updateRemoteEditors()
 
+	// We check for updates from others
+	updatedDoc := editor.syncManager.DocConfig.Document
+	lineCounter := 0
+	line := ""
+	for i := 0; i < len(updatedDoc); i++ {
+		if updatedDoc[i] == 0x0A {
+			// This is \n we need to add a new line
+			editor.buffer[lineCounter] = line
+			line = ""
+			lineCounter++
+		} else {
+			line += string(updatedDoc[i])
+		}
+	}
+
 	// We clear the current text on the screen
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 	width, height := termbox.Size()

@@ -16,12 +16,12 @@ import (
 type SyncManager struct {
 	connection *grpc.ClientConn
 	node       editorpb.NodeClient
-	docConfig  DocumentConfig
+	DocConfig  DocumentConfig
 }
 
 func NewSyncManager(docConfig DocumentConfig) *SyncManager {
 	syncManager := &SyncManager{
-		docConfig:  docConfig,
+		DocConfig:  docConfig,
 		connection: initConnection(),
 		node:       editorpb.NewNodeClient(initConnection()),
 	}
@@ -30,8 +30,8 @@ func NewSyncManager(docConfig DocumentConfig) *SyncManager {
 }
 
 func (syncManager *SyncManager) SendData(operations []*editorpb.Op) {
-	syncManager.docConfig.document.Apply(ot.NewOps(operations))
-	syncManager.node.Edit(context.Background(), &editorpb.EditReq{DocId: syncManager.docConfig.docId, Rev: int32(syncManager.docConfig.version), Ops: operations, UserId: syncManager.docConfig.authorId, Title: syncManager.docConfig.title})
+	syncManager.DocConfig.Document.Apply(ot.NewOps(operations))
+	syncManager.node.Edit(context.Background(), &editorpb.EditReq{DocId: syncManager.DocConfig.docId, Rev: int32(syncManager.DocConfig.version), Ops: operations, UserId: syncManager.DocConfig.authorId, Title: syncManager.DocConfig.title})
 }
 
 func initConnection() *grpc.ClientConn {
@@ -54,12 +54,13 @@ func initConnection() *grpc.ClientConn {
 }
 
 func (syncManager *SyncManager) startUpdateListener() {
-	stream, _ := syncManager.node.WatchDocument(context.Background())
-	stream.Send(&editorpb.WatchReq{DocId: syncManager.docConfig.docId, UserId: syncManager.docConfig.authorId})
+	stream, err := syncManager.node.WatchDocument(context.Background())
+	fmt.Println(err.Error())
+	stream.Send(&editorpb.WatchReq{DocId: syncManager.DocConfig.docId, UserId: syncManager.DocConfig.authorId})
 	docSnapshot, _ := stream.Recv()
-	syncManager.docConfig.title = docSnapshot.Title
-	syncManager.docConfig.document = docSnapshot.Doc
-	syncManager.docConfig.version = int(docSnapshot.Rev)
+	syncManager.DocConfig.title = docSnapshot.Title
+	syncManager.DocConfig.Document = docSnapshot.Doc
+	syncManager.DocConfig.version = int(docSnapshot.Rev)
 	for {
 		updatedData, err := stream.Recv()
 		if err == io.EOF {
@@ -69,6 +70,6 @@ func (syncManager *SyncManager) startUpdateListener() {
 			fmt.Errorf("Error receiving data: %v", err)
 			return
 		}
-		syncManager.docConfig.document.Apply(ot.NewOps(updatedData.Ops))
+		syncManager.DocConfig.Document.Apply(ot.NewOps(updatedData.Ops))
 	}
 }

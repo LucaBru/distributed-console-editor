@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	_ "github.com/Jille/grpc-multi-resolver"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -54,10 +55,20 @@ func initConnection() *grpc.ClientConn {
 }
 
 func (syncManager *SyncManager) startUpdateListener() {
+	msg, err := syncManager.node.Share(context.Background(), &editorpb.ShareReq{DocName: syncManager.DocConfig.title, Doc: syncManager.DocConfig.Document, UserId: syncManager.DocConfig.authorId})
+	if err != nil {
+		fmt.Println("Share error " + err.Error())
+	}
+	syncManager.DocConfig.docId = msg.DocId
 	stream, err := syncManager.node.WatchDocument(context.Background())
-	fmt.Println(err.Error())
+	if err != nil {
+		fmt.Println("Watch error: " + err.Error())
+	}
 	stream.Send(&editorpb.WatchReq{DocId: syncManager.DocConfig.docId, UserId: syncManager.DocConfig.authorId})
-	docSnapshot, _ := stream.Recv()
+	docSnapshot, err := stream.Recv()
+	if err != nil {
+		fmt.Println("Doc snapshot error: " + err.Error())
+	}
 	syncManager.DocConfig.title = docSnapshot.Title
 	syncManager.DocConfig.Document = docSnapshot.Doc
 	syncManager.DocConfig.version = int(docSnapshot.Rev)

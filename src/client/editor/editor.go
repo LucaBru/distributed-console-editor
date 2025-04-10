@@ -37,7 +37,7 @@ func NewEditor() *Editor {
 		filename:              "untitled.txt",
 		cursor:                *newCursor(),
 		syncManager:           *sync_manager.NewSyncManager(sync_manager.NewDocumentConfig("0108", "Enrico Z", 1, "Testing 1", ot.Doc{})),
-		operations: 		   []*editorpb.Op{},
+		operations:            []*editorpb.Op{},
 	}
 }
 

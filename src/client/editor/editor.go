@@ -5,6 +5,7 @@ import (
 	"editor-service/node/ot"
 	"editor-service/protos/editorpb"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 
@@ -36,7 +37,7 @@ func NewEditor() *Editor {
 		statusForegroundColor: termbox.ColorWhite,
 		filename:              "untitled.txt",
 		cursor:                *newCursor(),
-		syncManager:           *sync_manager.NewSyncManager(sync_manager.NewDocumentConfig("0108", "Enrico Z", 1, "Testing 1", ot.Doc{})),
+		syncManager:           *sync_manager.NewSyncManager(sync_manager.NewDocumentConfig("0108", "AuthorN" + string(rand.Int()), 1, "Testing 1", ot.Doc{})),
 		operations:            []*editorpb.Op{},
 	}
 }

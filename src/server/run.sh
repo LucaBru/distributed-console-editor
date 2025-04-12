@@ -26,5 +26,8 @@ raftadmin --leader multi:///localhost:50051,localhost:50052 add_voter nodeC loca
 sleep 2
 
 echo -e "\nCluster is online 🚀🚀"
+raftadmin localhost:50051 leader
+raftadmin localhost:50051 get_configuration
+
 
 wait

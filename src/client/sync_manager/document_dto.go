@@ -3,7 +3,7 @@ package sync_manager
 import "editor-service/node/ot"
 
 type DocumentConfig struct {
-	docId    string
+	DocId    string
 	authorId string
 	version  int
 	title    string
@@ -12,7 +12,7 @@ type DocumentConfig struct {
 
 func NewDocumentConfig(docId string, authorId string, version int, title string, document ot.Doc) DocumentConfig {
 	return DocumentConfig{
-		docId:    docId,
+		DocId:    docId,
 		authorId: authorId,
 		version:  version,
 		title:    title,

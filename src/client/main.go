@@ -2,16 +2,18 @@ package main
 
 import (
 	"client/editor"
-	"log"
+	"flag"
 
 	"github.com/nsf/termbox-go"
 )
 
 var (
-	logger = log.Default()
+	docId = flag.String("doc-id", "", "Document ID")
 )
 
 func main() {
+	flag.Parse()
+
 	err := termbox.Init()
 	if err != nil {
 		panic("Termbox init failed")
@@ -21,7 +23,7 @@ func main() {
 	// This input mode recognize escape characters
 	termbox.SetInputMode(termbox.InputEsc)
 
-	vEditor := editor.NewEditor()
+	vEditor := editor.NewEditor(*docId)
 
 	shouldExit := false
 

@@ -28,7 +28,7 @@ type Editor struct {
 	operations            []*editorpb.Op
 }
 
-func NewEditor() *Editor {
+func NewEditor(docId string) *Editor {
 	return &Editor{
 		buffer:                []string{""},
 		backgroundColor:       termbox.ColorDefault,
@@ -37,7 +37,7 @@ func NewEditor() *Editor {
 		statusForegroundColor: termbox.ColorWhite,
 		filename:              "untitled.txt",
 		cursor:                *newCursor(),
-		syncManager:           *sync_manager.NewSyncManager(sync_manager.NewDocumentConfig("0108", "AuthorN" + string(rand.Int()), 1, "Testing 1", ot.Doc{})),
+		syncManager:           *sync_manager.NewSyncManager(sync_manager.NewDocumentConfig(docId, "AuthorN"+string(rand.Int()), 1, "Testing 1", ot.Doc{})),
 		operations:            []*editorpb.Op{},
 	}
 }
@@ -74,7 +74,10 @@ func (editor *Editor) Draw() {
 }
 
 func (editor *Editor) updateRemoteEditors() {
-	editor.syncManager.SendData(editor.operations)
+	if len(editor.operations) > 0 {
+		editor.syncManager.SendData(editor.operations)
+		editor.operations = []*editorpb.Op{}
+	}
 }
 
 func (editor *Editor) drawText(width int, height int) {
@@ -101,7 +104,7 @@ func (editor *Editor) drawText(width int, height int) {
 
 func (editor *Editor) drawStatus(width int, height int) {
 	// Now we draw the status line
-	statusLine := fmt.Sprintf(" %s - %d lines %s", editor.filename, len(editor.buffer), map[bool]string{true: "[modified]", false: ""}[editor.modified])
+	statusLine := fmt.Sprintf(" %s - %d lines %s", editor.syncManager.DocConfig.DocId, len(editor.buffer), map[bool]string{true: "[modified]", false: ""}[editor.modified])
 	if editor.statusMsg != "" {
 		statusLine = editor.statusMsg
 	}

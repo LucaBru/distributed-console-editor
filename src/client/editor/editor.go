@@ -24,7 +24,7 @@ type Editor struct {
 	foregroundColor       termbox.Attribute
 	statusBackgroundColor termbox.Attribute
 	statusForegroundColor termbox.Attribute
-	syncManager           sync_manager.SyncManager
+	syncManager           *sync_manager.SyncManager
 	operations            []*editorpb.Op
 }
 
@@ -37,7 +37,7 @@ func NewEditor(docId string) *Editor {
 		statusForegroundColor: termbox.ColorWhite,
 		filename:              "untitled.txt",
 		cursor:                *newCursor(),
-		syncManager:           *sync_manager.NewSyncManager(sync_manager.NewDocumentConfig(docId, "AuthorN"+string(rand.Int()), 1, "Testing 1", ot.Doc{})),
+		syncManager:           sync_manager.NewSyncManager(sync_manager.NewDocumentConfig(docId, "AuthorN"+fmt.Sprint(rand.Int()), 1, "Testing 1", ot.Doc{})),
 		operations:            []*editorpb.Op{},
 	}
 }
@@ -51,7 +51,7 @@ func (editor *Editor) Draw() {
 	updatedDoc := editor.syncManager.DocConfig.Document
 	lineCounter := 0
 	line := ""
-	for i := 0; i < len(updatedDoc); i++ {
+	for i := range updatedDoc {
 		if updatedDoc[i] == 0x0A {
 			// This is \n we need to add a new line
 			editor.buffer[lineCounter] = line
@@ -137,6 +137,9 @@ func (editor *Editor) insertRune(char rune) {
 
 	// Now we can insert the character
 	line = append(line[:editor.cursor.x], append([]rune{char}, line[editor.cursor.x:]...)...)
+	if len(editor.buffer) != 0 && len(editor.buffer[0]) != 0 {
+		editor.operations = append(editor.operations, &editorpb.Op{N: int32(len(editor.buffer[0]))})
+	}
 	editor.operations = append(editor.operations, &editorpb.Op{N: 0, S: string(char)})
 	if len(line) > width {
 		// In this case since we are writing over the available space we scroll horizontally

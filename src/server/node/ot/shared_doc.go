@@ -69,22 +69,19 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 	}
 
 	var err error
-	fmt.Printf("rev %d, history: %v\n", rev, d.history)
 	for _, other := range d.history[rev:] {
 		if ops, _, err = Transform(ops, other); err != nil {
 			return fmt.Errorf("Operations transformation failed: %w", err)
 		}
 	}
 
-	var old []byte
-	copy(old, d.doc)
 	d.Lock()
 	defer d.Unlock()
 	if err = d.doc.Apply(ops); err != nil {
 		fmt.Printf("Failed to apply ops due to %w\n", err)
 		return fmt.Errorf("Operations application failed: %s\n", err.Error())
 	}
-	fmt.Printf(fmt.Sprintf("Shared doc was updated from '%s' to '%s\n'", string(old), string(d.doc)))
+	fmt.Printf(fmt.Sprintf("Shared doc '%s\n'", string(d.doc)))
 	d.history = append(d.history, ops)
 
 	if title != "" && title != d.title {
@@ -92,7 +89,11 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 	}
 
 	// notify all the collaborators with new ops
+	for name := range d.listeners {
+		fmt.Printf("Notified listener: %d\n", name)
+	}
 	for id, ch := range d.listeners {
+		fmt.Printf("Has to be notified: %s == %s, result %b\n", id, authorId, id == authorId)
 		if id != authorId {
 			ch <- Update{Ops: ops, Title: d.title}
 		}

@@ -29,8 +29,10 @@ type Editor struct {
 	operations            []*editorpb.Op
 }
 
-func NewEditor(docId string) *Editor {
-	return &Editor{
+func NewEditor(docId string) (*Editor, <-chan struct{}) {
+	authorId := rand.Int()
+	syncManager, recvUpdate := sync_manager.NewSyncManager(sync_manager.NewDocumentConfig(docId, "AuthorN"+fmt.Sprint(authorId), 0, "Testing 1", ot.Doc{}))
+	editor := &Editor{
 		buffer:                []string{""},
 		backgroundColor:       termbox.ColorDefault,
 		foregroundColor:       termbox.ColorDefault,
@@ -38,9 +40,11 @@ func NewEditor(docId string) *Editor {
 		statusForegroundColor: termbox.ColorWhite,
 		filename:              "untitled.txt",
 		cursor:                *newCursor(),
-		syncManager:           sync_manager.NewSyncManager(sync_manager.NewDocumentConfig(docId, "AuthorN"+fmt.Sprint(rand.Int()), 1, "Testing 1", ot.Doc{})),
+		syncManager:           syncManager,
 		operations:            []*editorpb.Op{},
 	}
+	editor.setStatus("Author id: " + fmt.Sprintf("%d", authorId))
+	return editor, recvUpdate
 }
 
 // Draw editor content to the terminal

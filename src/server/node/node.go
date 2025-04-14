@@ -36,6 +36,7 @@ func (n *Node) Share(ctx context.Context, req *editorpb.ShareReq) (*editorpb.Sha
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("Author %s share new doc %s\n", req.UserId, docId)
 	return &editorpb.ShareReply{DocId: docId}, nil
 }
 
@@ -84,6 +85,7 @@ func (n *Node) WatchDocument(stream editorpb.Node_WatchDocumentServer) error {
 	if err != nil {
 		return err
 	}
+	fmt.Printf("Author %s what a doc\n", req.UserId)
 	recvUpdate, doc, title, rev, err := n.state.SubListener(req)
 	if err != nil {
 		return err

@@ -1,15 +1,14 @@
 package main
 
 import (
-	"client/editor"
 	"flag"
+
+	"client/editor"
 
 	"github.com/nsf/termbox-go"
 )
 
-var (
-	docId = flag.String("doc-id", "", "Document ID")
-)
+var docId = flag.String("doc-id", "", "Document ID")
 
 func main() {
 	flag.Parse()
@@ -23,16 +22,30 @@ func main() {
 	// This input mode recognize escape characters
 	termbox.SetInputMode(termbox.InputEsc)
 
-	vEditor := editor.NewEditor(*docId)
+	vEditor, recvUpdate := editor.NewEditor(*docId)
 
 	shouldExit := false
 
+	recvKeyDigit := make(chan *termbox.Event, 20)
+
+	go func() {
+		for !shouldExit {
+			e := termbox.PollEvent()
+			recvKeyDigit <- &e
+		}
+	}()
+
 	for !shouldExit {
 		vEditor.Draw()
-
-		switch event := termbox.PollEvent(); event.Type {
-		case termbox.EventKey:
-			shouldExit = vEditor.OnKeyEvent(event)
+		select {
+		case event := <-recvKeyDigit:
+			{
+				switch event.Type {
+				case termbox.EventKey:
+					shouldExit = vEditor.OnKeyEvent(*event)
+				}
+			}
+		case <-recvUpdate:
 		}
 	}
 }

@@ -41,10 +41,7 @@ func NewSyncManager(docConfig DocumentConfig) (*SyncManager, <-chan struct{}) {
 		node:           editorpb.NewNodeClient(initConnection()),
 		notifyOnUpdate: notifyUpdate,
 	}
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	go syncManager.startUpdateListener(writer, wg)
-	wg.Wait()
+	go syncManager.startUpdateListener(writer)
 	return syncManager, notifyUpdate
 }
 
@@ -97,7 +94,7 @@ func initConnection() *grpc.ClientConn {
 	return conn
 }
 
-func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer, wg *sync.WaitGroup) {
+func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer) {
 	syncManager.Lock()
 	stream, err := syncManager.node.WatchDocument(context.Background())
 	if err != nil {
@@ -120,9 +117,9 @@ func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer, wg *sy
 		syncManager.DocConfig.Document = docSnapshot.Doc
 		syncManager.DocConfig.version = int(docSnapshot.Rev)
 		fmt.Fprintln(writer, "Document snapshot recv", docSnapshot.Rev)
+		syncManager.notifyOnUpdate <- struct{}{}
 		writer.Flush()
 	}
-	wg.Done()
 	syncManager.Unlock()
 
 	for {

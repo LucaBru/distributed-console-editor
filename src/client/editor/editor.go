@@ -43,7 +43,7 @@ func NewEditor(docId string) (*Editor, <-chan struct{}) {
 		syncManager:           syncManager,
 		operations:            []*editorpb.Op{},
 	}
-	editor.setStatus("Author id: " + fmt.Sprintf("%d", authorId))
+	// editor.setStatus("Author id: " + fmt.Sprintf("%d", authorId))
 	return editor, recvUpdate
 }
 
@@ -127,7 +127,6 @@ func (editor *Editor) drawStatus(width int, height int) {
 }
 
 func (editor *Editor) insertRune(char rune) {
-	editor.setStatus(fmt.Sprintf("Insert char %c", char))
 	line := []rune(editor.buffer[editor.cursor.y])
 	width, _ := termbox.Size()
 	if editor.cursor.x > len(line) {
@@ -153,10 +152,10 @@ func (editor *Editor) insertRune(char rune) {
 	editor.modified = true
 }
 
-// InsertNewline inserts a newline at the current cursor position
 func (editor *Editor) insertNewline() {
 	_, height := termbox.Size()
-	if editor.cursor.y >= len(editor.buffer) {
+	if editor.cursor.y+1 == len(editor.buffer) {
+		editor.setStatus("New line inserted")
 		editor.buffer = append(editor.buffer, "")
 	} else {
 		line := editor.buffer[editor.cursor.y]
@@ -185,6 +184,7 @@ func (editor *Editor) insertNewline() {
 		editor.offsetY++
 	}
 	editor.cursor.returnToTheBeginOfTheLine()
+	editor.setStatus(fmt.Sprintf("Cursor pos %d, buffer length %d", editor.cursor.y, len(editor.buffer)))
 	editor.modified = true
 }
 
@@ -234,31 +234,40 @@ func (editor *Editor) saveFile() {
 }
 
 func (editor *Editor) scrollRight() {
-	if editor.cursor.x < len(editor.buffer[editor.cursor.y]) {
+	_, width := termbox.Size()
+	if editor.offsetX > 0 || editor.cursor.x >= width {
 		editor.cursor.moveRight()
 		editor.offsetX++
+		return
 	}
+	editor.cursor.moveRight()
 }
 
 func (editor *Editor) scrollLeft() {
-	if editor.offsetX > 0 && editor.cursor.x > 0 {
+	if editor.offsetX > 0 {
 		editor.cursor.moveLeft()
 		editor.offsetX--
+		return
 	}
+	editor.cursor.moveLeft()
 }
 
 func (editor *Editor) scrollUp() {
 	if editor.offsetY > 0 && editor.cursor.y > 0 {
 		editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y-1]))
 		editor.offsetY--
+		return
 	}
+	editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y-1]))
 }
 
 func (editor *Editor) scrollDown() {
 	if editor.cursor.y < len(editor.buffer)-1 {
 		editor.cursor.goToTheEndOfNextLine(len(editor.buffer[editor.cursor.y+1]))
 		editor.offsetY++
+		return
 	}
+	editor.cursor.goToTheEndOfNextLine(len(editor.buffer[editor.cursor.y+1]))
 }
 
 // SetStatus sets a temporary status message

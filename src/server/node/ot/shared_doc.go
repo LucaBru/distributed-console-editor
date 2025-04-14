@@ -1,9 +1,10 @@
 package ot
 
 import (
-	"editor-service/protos/editorpb"
 	"fmt"
 	"sync"
+
+	"editor-service/protos/editorpb"
 )
 
 type SharedDoc struct {
@@ -68,6 +69,7 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 	}
 
 	var err error
+	fmt.Printf("rev %d, history: %v\n", rev, d.history)
 	for _, other := range d.history[rev:] {
 		if ops, _, err = Transform(ops, other); err != nil {
 			return fmt.Errorf("Operations transformation failed: %w", err)
@@ -79,7 +81,8 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 	d.Lock()
 	defer d.Unlock()
 	if err = d.doc.Apply(ops); err != nil {
-		return fmt.Errorf("Operations application failed: %w", err)
+		fmt.Printf("Failed to apply ops due to %w\n", err)
+		return fmt.Errorf("Operations application failed: %s\n", err.Error())
 	}
 	fmt.Printf(fmt.Sprintf("Shared doc was updated from '%s' to '%s\n'", string(old), string(d.doc)))
 	d.history = append(d.history, ops)

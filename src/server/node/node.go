@@ -2,11 +2,13 @@ package node
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"time"
+
 	serror "editor-service/errors"
 	"editor-service/protos/editorpb"
 	"editor-service/protos/rlogpb"
-	"io"
-	"time"
 
 	"github.com/Jille/raft-grpc-leader-rpc/rafterrors"
 	"github.com/google/uuid"
@@ -47,9 +49,11 @@ func (n *Node) Delete(ctx context.Context, req *editorpb.DeleteReq) (*editorpb.D
 }
 
 func (n *Node) Edit(ctx context.Context, req *editorpb.EditReq) (*editorpb.Ack, error) {
+	fmt.Printf("Edit request %o\n", req)
 	log := &rlogpb.Log{Cmd: &rlogpb.Log_Edit{Edit: &rlogpb.Edit{DocId: req.DocId, Rev: req.Rev, Ops: req.Ops, UserId: req.UserId, Title: req.Title}}}
 	err := n.replicateLog(log)
 	if err != nil {
+		fmt.Printf("Error in editing %s\n", err.Error())
 		return nil, err
 	}
 	return &editorpb.Ack{}, nil
@@ -73,7 +77,6 @@ func (n *Node) replicateLog(log *rlogpb.Log) error {
 }
 
 func (n *Node) WatchDocument(stream editorpb.Node_WatchDocumentServer) error {
-
 	req, err := stream.Recv()
 	if err == io.EOF {
 		return nil

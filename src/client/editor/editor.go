@@ -1,13 +1,14 @@
 package editor
 
 import (
-	"client/sync_manager"
 	"editor-service/node/ot"
 	"editor-service/protos/editorpb"
 	"fmt"
 	"math/rand"
 	"os"
 	"strings"
+
+	"client/sync_manager"
 
 	"github.com/nsf/termbox-go"
 )
@@ -121,10 +122,10 @@ func (editor *Editor) drawStatus(width int, height int) {
 		}
 		termbox.SetCell(x, height-1, char, editor.statusBackgroundColor, editor.statusForegroundColor)
 	}
-
 }
 
 func (editor *Editor) insertRune(char rune) {
+	editor.setStatus(fmt.Sprintf("Insert char %c", char))
 	line := []rune(editor.buffer[editor.cursor.y])
 	width, _ := termbox.Size()
 	if editor.cursor.x > len(line) {
@@ -221,7 +222,7 @@ func (editor *Editor) saveFile() {
 		editor.setStatus("Error opening file: " + file_err.Error())
 		return
 	}
-	err := os.WriteFile(file.Name(), []byte(content), 0644)
+	err := os.WriteFile(file.Name(), []byte(content), 0o644)
 	if err != nil {
 		editor.setStatus("Error saving file: " + err.Error())
 	} else {

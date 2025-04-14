@@ -54,10 +54,11 @@ func (syncManager *SyncManager) SendData(operations []*editorpb.Op) {
 		if errA != nil {
 			fmt.Fprintln(writer, "Error applying operations:", errA)
 		}
-		ack, err2 := syncManager.node.Edit(context.Background(), &editorpb.EditReq{DocId: syncManager.DocConfig.DocId, Rev: 0 /* int32(syncManager.DocConfig.version) */, Ops: operations, UserId: syncManager.DocConfig.authorId, Title: syncManager.DocConfig.title})
+		ack, err2 := syncManager.node.Edit(context.Background(), &editorpb.EditReq{DocId: syncManager.DocConfig.DocId, Rev: int32(syncManager.DocConfig.version) /* int32(syncManager.DocConfig.version) */, Ops: operations, UserId: syncManager.DocConfig.authorId, Title: syncManager.DocConfig.title})
 		if err2 != nil {
 			fmt.Fprintln(writer, "Error sending operations:", err2)
 		}
+		syncManager.DocConfig.version++
 		fmt.Fprintln(writer, "Received ack:", ack)
 		writer.Flush()
 	}
@@ -128,6 +129,7 @@ func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer) {
 		}
 		syncManager.DocConfig.Document.Apply(ot.NewOps(updatedData.Ops))
 		fmt.Fprintf(writer, "Received update: %s\n", string(updatedData.Doc))
+		syncManager.DocConfig.version++
 		writer.Flush()
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	_ "github.com/Jille/grpc-multi-resolver"
@@ -36,7 +37,10 @@ func NewSyncManager(docConfig DocumentConfig) *SyncManager {
 		connection: initConnection(),
 		node:       editorpb.NewNodeClient(initConnection()),
 	}
-	go syncManager.startUpdateListener(writer)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go syncManager.startUpdateListener(writer, wg)
+	wg.Wait()
 	return syncManager
 }
 
@@ -83,7 +87,7 @@ func initConnection() *grpc.ClientConn {
 	return conn
 }
 
-func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer) {
+func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer, wg *sync.WaitGroup) {
 	if syncManager.DocConfig.DocId == "" {
 		fmt.Fprintln(writer, "DocId is empty, creating new document...")
 		msg, err := syncManager.node.Share(context.Background(), &editorpb.ShareReq{DocName: syncManager.DocConfig.title, Doc: syncManager.DocConfig.Document, UserId: syncManager.DocConfig.authorId})
@@ -104,16 +108,15 @@ func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer) {
 		fmt.Fprintln(writer, "Doc snapshot error: "+err.Error())
 	}
 	writer.Flush()
+
 	syncManager.DocConfig.title = docSnapshot.Title
+	fmt.Fprintf(writer, "File received: ", string(docSnapshot.Doc))
 	syncManager.DocConfig.Document = docSnapshot.Doc
 	syncManager.DocConfig.version = int(docSnapshot.Rev)
-	fmt.Fprintln(writer, "Document snapshot received with rev: ", docSnapshot.Rev)
+	fmt.Fprintln(writer, "Document snapshot recv", docSnapshot.Rev)
+	wg.Done()
 	writer.Flush()
-	for true {
-		time.Sleep(2 * time.Second)
-		fmt.Fprintln(writer, "Waiting for updates...")
-		writer.Flush()
-
+	for {
 		updatedData, err := stream.Recv()
 		fmt.Fprintln(writer, "Stream Recv called")
 		writer.Flush()
@@ -127,8 +130,11 @@ func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer) {
 			writer.Flush()
 			continue
 		}
-		syncManager.DocConfig.Document.Apply(ot.NewOps(updatedData.Ops))
-		fmt.Fprintf(writer, "Received update: %s\n", string(updatedData.Doc))
+		err = syncManager.DocConfig.Document.Apply(ot.NewOps(updatedData.Ops))
+		if err != nil {
+			fmt.Fprintln(writer, "Failed to apply received ops")
+			return
+		}
 		syncManager.DocConfig.version++
 		writer.Flush()
 	}

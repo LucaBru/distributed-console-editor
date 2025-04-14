@@ -51,15 +51,13 @@ func (editor *Editor) Draw() {
 	// We check for updates from others
 	updatedDoc := editor.syncManager.DocConfig.Document
 	lineCounter := 0
-	line := ""
-	for i := range updatedDoc {
-		if updatedDoc[i] == 0x0A {
-			// This is \n we need to add a new line
-			editor.buffer[lineCounter] = line
-			line = ""
+	editor.buffer = []string{""}
+	for i, digit := range updatedDoc {
+		if digit == 0x0A {
+			editor.buffer = append(editor.buffer, "")
 			lineCounter++
 		} else {
-			line += string(updatedDoc[i])
+			editor.buffer[lineCounter] += string(updatedDoc[i])
 		}
 	}
 

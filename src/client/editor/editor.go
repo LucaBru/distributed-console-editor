@@ -249,6 +249,9 @@ func (editor *Editor) scrollLeft() {
 }
 
 func (editor *Editor) scrollUp() {
+	if editor.cursor.y == 0 {
+		return
+	}
 	if editor.offsetY > 0 && editor.cursor.y > 0 {
 		editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y-1]))
 		editor.offsetY--
@@ -258,7 +261,11 @@ func (editor *Editor) scrollUp() {
 }
 
 func (editor *Editor) scrollDown() {
-	if editor.cursor.y < len(editor.buffer)-1 {
+	if editor.cursor.y+1 == len(editor.buffer) {
+		return
+	}
+	_, height := termbox.Size()
+	if editor.cursor.y > height {
 		editor.cursor.goToTheEndOfNextLine(len(editor.buffer[editor.cursor.y+1]))
 		editor.offsetY++
 		return

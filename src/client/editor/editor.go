@@ -61,7 +61,7 @@ func NewEditor(docId string) (*Editor, <-chan struct{}) {
 // Draw editor content to the terminal
 func (editor *Editor) Draw() {
 	// TODO: get a copy, not the document (pay attention to the use of syncManager (lock needed))
-	updatedDoc := editor.syncManager.DocConfig.Document
+	updatedDoc := editor.syncManager.GetDoc()
 	lineCounter := 0
 	editor.buffer = []string{""}
 	fmt.Fprintf(Writer, "ot document %v\n", updatedDoc)
@@ -112,7 +112,7 @@ func (editor *Editor) drawText(width int, height int) {
 
 func (editor *Editor) drawStatus(width int, height int) {
 	// Now we draw the status line
-	statusLine := fmt.Sprintf(" %s - %d lines %s", editor.syncManager.DocConfig.DocId, len(editor.buffer), map[bool]string{true: "[modified]", false: ""}[editor.modified])
+	statusLine := fmt.Sprintf(" %s - %d lines %s", editor.syncManager.GetDocId(), len(editor.buffer), map[bool]string{true: "[modified]", false: ""}[editor.modified])
 	if editor.statusMsg != "" {
 		statusLine = editor.statusMsg
 	}
@@ -165,8 +165,6 @@ func (editor *Editor) insertRune(char rune) {
 
 func (editor *Editor) insertNewline() {
 	beforeCursor, afterCursor := editor.cursorBounds()
-	fmt.Fprintf(Writer, "Inserting new line %d %d %v", beforeCursor, afterCursor, editor.syncManager.DocConfig.Document)
-	Writer.Flush()
 	editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: 0, S: "\n"}, ot.Op{N: afterCursor}})
 
 	editor.cursor.moveDown()

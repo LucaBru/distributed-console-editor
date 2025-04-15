@@ -60,6 +60,7 @@ func NewEditor(docId string) (*Editor, <-chan struct{}) {
 
 // Draw editor content to the terminal
 func (editor *Editor) Draw() {
+	// TODO: get a copy, not the document (pay attention to the use of syncManager (lock needed))
 	updatedDoc := editor.syncManager.DocConfig.Document
 	lineCounter := 0
 	editor.buffer = []string{""}
@@ -130,7 +131,7 @@ func (editor *Editor) drawStatus(width int, height int) {
 	}
 }
 
-func (editor *Editor) getDocBounds() (int, int) {
+func (editor *Editor) cursorBounds() (int, int) {
 	prev := 0
 	next := len(editor.buffer[editor.cursor.y]) - editor.cursor.x
 	for _, line := range editor.buffer[:editor.cursor.y] {
@@ -146,11 +147,10 @@ func (editor *Editor) getDocBounds() (int, int) {
 
 func (editor *Editor) insertRune(char rune) {
 	ops := ot.Ops{}
-	beforeCursor, afterCursor := editor.getDocBounds()
-	line := []rune(editor.buffer[editor.cursor.y])
+	beforeCursor, afterCursor := editor.cursorBounds()
 	ops = append(ops, ot.Op{N: beforeCursor})
 
-	width, _ := termbox.Size()
+	line := []rune(editor.buffer[editor.cursor.y])
 	for i := 0; i < editor.cursor.x-len(line); i++ {
 		line = append(line, ' ')
 		ops = append(ops, ot.Op{N: 0, S: " "})
@@ -159,17 +159,12 @@ func (editor *Editor) insertRune(char rune) {
 	ops = append(ops, ot.Op{N: 0, S: string(char)})
 	ops = append(ops, ot.Op{N: afterCursor})
 	editor.syncManager.ApplyEdit(ops)
-	if len(line) > width {
-		// In this case since we are writing over the available space we scroll horizontally
-		editor.offsetX++
-	}
-	editor.buffer[editor.cursor.y] = string(line)
-	editor.cursor.moveRight()
+	editor.scrollRight()
 	editor.modified = true
 }
 
 func (editor *Editor) insertNewline() {
-	beforeCursor, afterCursor := editor.getDocBounds()
+	beforeCursor, afterCursor := editor.cursorBounds()
 	fmt.Fprintf(Writer, "Inserting new line %d %d %v", beforeCursor, afterCursor, editor.syncManager.DocConfig.Document)
 	Writer.Flush()
 	editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: 0, S: "\n"}, ot.Op{N: afterCursor}})
@@ -186,29 +181,15 @@ func (editor *Editor) insertNewline() {
 
 // DeleteChar deletes the character at the current cursor position
 func (editor *Editor) deleteChar() {
-	if editor.cursor.x == 0 && editor.cursor.y == 0 {
+	if editor.cursor.x >= len(editor.buffer[editor.cursor.y]) {
+		fmt.Fprintln(Writer, "Try to delete an empty char")
+		Writer.Flush()
 		return
 	}
 
-	if editor.cursor.x > 0 {
-		// Delete character before cursor
-		line := []rune(editor.buffer[editor.cursor.y])
-		if editor.cursor.x <= len(line) {
-			line = append(line[:editor.cursor.x-1], line[editor.cursor.x:]...)
-			editor.buffer[editor.cursor.y] = string(line)
-			editor.cursor.moveLeft()
-		}
-	} else {
-		// Backspace at the beginning of a line, join with previous line
-		if editor.cursor.y > 0 {
-			prevLineLen := len(editor.buffer[editor.cursor.y-1])
-			editor.buffer[editor.cursor.y-1] += editor.buffer[editor.cursor.y]
-			editor.buffer = append(editor.buffer[:editor.cursor.y], editor.buffer[editor.cursor.y+1:]...)
-			editor.cursor.goToTheEndOfPreviousLine(prevLineLen)
-		}
-	}
-	// editor.operations = append(editor.operations, &editorpb.Op{N: -1})
-
+	beforeCursor, afterCursor := editor.cursorBounds()
+	editor.setStatus(fmt.Sprintf("delete char in pos %d", beforeCursor))
+	editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: -1}, ot.Op{N: afterCursor - 1}})
 	editor.modified = true
 }
 
@@ -297,8 +278,13 @@ func (editor *Editor) OnKeyEvent(event termbox.Event) bool {
 		editor.scrollLeft()
 	case termbox.KeyEnter:
 		editor.insertNewline()
-	case termbox.KeyBackspace, termbox.KeyBackspace2, termbox.KeyDelete:
+	case termbox.KeyDelete:
 		editor.deleteChar()
+	case termbox.KeyBackspace2:
+		{
+			editor.scrollLeft()
+			editor.deleteChar()
+		}
 	case termbox.KeySpace:
 		editor.insertRune(' ')
 	default:

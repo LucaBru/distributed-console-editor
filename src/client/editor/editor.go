@@ -140,7 +140,7 @@ func (editor *Editor) cursorBounds() (int, int) {
 	prev += editor.cursor.x
 
 	for _, line := range editor.buffer[editor.cursor.y+1:] {
-		next += len(line)
+		next += len(line) + 1
 	}
 	return prev, next
 }
@@ -179,16 +179,18 @@ func (editor *Editor) insertNewline() {
 
 // DeleteChar deletes the character at the current cursor position
 func (editor *Editor) deleteChar() {
-	if editor.cursor.x >= len(editor.buffer[editor.cursor.y]) {
-		fmt.Fprintln(Writer, "Try to delete an empty char")
-		Writer.Flush()
+	if editor.cursor.x == 0 && editor.cursor.y == 0 && len(editor.buffer) == 1 && editor.buffer[0] == "" {
 		return
 	}
-
-	beforeCursor, afterCursor := editor.cursorBounds()
-	editor.setStatus(fmt.Sprintf("delete char in pos %d", beforeCursor))
-	editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: -1}, ot.Op{N: afterCursor - 1}})
-	editor.modified = true
+	if editor.cursor.x < len(editor.buffer[editor.cursor.y]) || editor.cursor.x == len(editor.buffer[editor.cursor.y]) && editor.cursor.y < len(editor.buffer) {
+		beforeCursor, afterCursor := editor.cursorBounds()
+		editor.setStatus(fmt.Sprintf("delete char in pos %d", beforeCursor))
+		editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: -1}, ot.Op{N: afterCursor - 1}})
+		editor.modified = true
+		return
+	}
+	fmt.Fprintln(Writer, "Try to delete an empty char")
+	Writer.Flush()
 }
 
 // SaveFile saves the current buffer to a file
@@ -219,6 +221,13 @@ func (editor *Editor) scrollRight() {
 }
 
 func (editor *Editor) scrollLeft() {
+	if editor.cursor.x == 0 && editor.cursor.y == 0 {
+		return
+	}
+	if editor.cursor.x == 0 {
+		editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y-1]))
+		editor.cursor.x++
+	}
 	if editor.offsetX > 0 {
 		editor.cursor.moveLeft()
 		editor.offsetX--
@@ -280,6 +289,9 @@ func (editor *Editor) OnKeyEvent(event termbox.Event) bool {
 		editor.deleteChar()
 	case termbox.KeyBackspace2:
 		{
+			if editor.cursor.x == 0 && editor.cursor.y == 0 {
+				break
+			}
 			editor.scrollLeft()
 			editor.deleteChar()
 		}

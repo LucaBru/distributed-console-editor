@@ -1,8 +1,8 @@
 package editor
 
 import (
+	"bufio"
 	"editor-service/node/ot"
-	"editor-service/protos/editorpb"
 	"fmt"
 	"math/rand"
 	"os"
@@ -10,8 +10,21 @@ import (
 
 	"client/sync_manager"
 
+	// "log"
+
 	"github.com/nsf/termbox-go"
 )
+
+var Writer = initWriter()
+
+func initWriter() *bufio.Writer {
+	file, err := os.Create("editor.log")
+	if err != nil {
+		fmt.Println("Error creating log file:", err)
+		return nil
+	}
+	return bufio.NewWriter(file)
+}
 
 type Editor struct {
 	buffer                []string // These are the lines of text
@@ -26,7 +39,6 @@ type Editor struct {
 	statusBackgroundColor termbox.Attribute
 	statusForegroundColor termbox.Attribute
 	syncManager           *sync_manager.SyncManager
-	operations            []*editorpb.Op
 }
 
 func NewEditor(docId string) (*Editor, <-chan struct{}) {
@@ -41,7 +53,6 @@ func NewEditor(docId string) (*Editor, <-chan struct{}) {
 		filename:              "untitled.txt",
 		cursor:                *newCursor(),
 		syncManager:           syncManager,
-		operations:            []*editorpb.Op{},
 	}
 	// editor.setStatus("Author id: " + fmt.Sprintf("%d", authorId))
 	return editor, recvUpdate
@@ -49,15 +60,15 @@ func NewEditor(docId string) (*Editor, <-chan struct{}) {
 
 // Draw editor content to the terminal
 func (editor *Editor) Draw() {
-	// We update other nodes
-	editor.updateRemoteEditors()
-
-	// We check for updates from others
 	updatedDoc := editor.syncManager.DocConfig.Document
 	lineCounter := 0
 	editor.buffer = []string{""}
+	fmt.Fprintf(Writer, "ot document %v\n", updatedDoc)
+	Writer.Flush()
 	for i, digit := range updatedDoc {
 		if digit == 0x0A {
+			fmt.Fprintf(Writer, "Encountered new line while redrawing\n")
+			Writer.Flush()
 			editor.buffer = append(editor.buffer, "")
 			lineCounter++
 		} else {
@@ -74,13 +85,6 @@ func (editor *Editor) Draw() {
 
 	termbox.SetCursor(editor.cursor.x-editor.offsetX, editor.cursor.y-editor.offsetY)
 	termbox.Flush()
-}
-
-func (editor *Editor) updateRemoteEditors() {
-	if len(editor.operations) > 0 {
-		editor.syncManager.SendData(editor.operations)
-		editor.operations = []*editorpb.Op{}
-	}
 }
 
 func (editor *Editor) drawText(width int, height int) {
@@ -126,23 +130,35 @@ func (editor *Editor) drawStatus(width int, height int) {
 	}
 }
 
+func (editor *Editor) getDocBounds() (int, int) {
+	prev := 0
+	next := len(editor.buffer[editor.cursor.y]) - editor.cursor.x
+	for _, line := range editor.buffer[:editor.cursor.y] {
+		prev += len(line) + 1
+	}
+	prev += editor.cursor.x
+
+	for _, line := range editor.buffer[editor.cursor.y+1:] {
+		next += len(line)
+	}
+	return prev, next
+}
+
 func (editor *Editor) insertRune(char rune) {
+	ops := ot.Ops{}
+	beforeCursor, afterCursor := editor.getDocBounds()
 	line := []rune(editor.buffer[editor.cursor.y])
+	ops = append(ops, ot.Op{N: beforeCursor})
+
 	width, _ := termbox.Size()
-	if editor.cursor.x > len(line) {
-		// If cursor is over the end of the current line we insert some spaces to fill the void
-		for i := len(line); i < editor.cursor.x; i++ {
-			line = append(line, ' ')
-			editor.operations = append(editor.operations, &editorpb.Op{N: 0, S: " "})
-		}
+	for i := 0; i < editor.cursor.x-len(line); i++ {
+		line = append(line, ' ')
+		ops = append(ops, ot.Op{N: 0, S: " "})
 	}
 
-	// Now we can insert the character
-	line = append(line[:editor.cursor.x], append([]rune{char}, line[editor.cursor.x:]...)...)
-	if len(editor.buffer) != 0 && len(editor.buffer[0]) != 0 {
-		editor.operations = append(editor.operations, &editorpb.Op{N: int32(len(editor.buffer[0]))})
-	}
-	editor.operations = append(editor.operations, &editorpb.Op{N: 0, S: string(char)})
+	ops = append(ops, ot.Op{N: 0, S: string(char)})
+	ops = append(ops, ot.Op{N: afterCursor})
+	editor.syncManager.ApplyEdit(ops)
 	if len(line) > width {
 		// In this case since we are writing over the available space we scroll horizontally
 		editor.offsetX++
@@ -153,38 +169,18 @@ func (editor *Editor) insertRune(char rune) {
 }
 
 func (editor *Editor) insertNewline() {
-	_, height := termbox.Size()
-	if editor.cursor.y+1 == len(editor.buffer) {
-		editor.setStatus("New line inserted")
-		editor.buffer = append(editor.buffer, "")
-	} else {
-		line := editor.buffer[editor.cursor.y]
-		beforeCursor := ""
-		afterCursor := ""
-
-		if editor.cursor.x < len(line) {
-			beforeCursor = line[:editor.cursor.x]
-			afterCursor = line[editor.cursor.x:]
-		} else {
-			beforeCursor = line
-		}
-
-		editor.buffer[editor.cursor.y] = beforeCursor
-
-		// Insert a new line after the current one
-		editor.buffer = append(
-			editor.buffer[:editor.cursor.y+1],
-			append([]string{afterCursor}, editor.buffer[editor.cursor.y+1:]...)...,
-		)
-		editor.operations = append(editor.operations, &editorpb.Op{N: 0, S: "\n"})
-	}
+	beforeCursor, afterCursor := editor.getDocBounds()
+	fmt.Fprintf(Writer, "Inserting new line %d %d %v", beforeCursor, afterCursor, editor.syncManager.DocConfig.Document)
+	Writer.Flush()
+	editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: 0, S: "\n"}, ot.Op{N: afterCursor}})
 
 	editor.cursor.moveDown()
+	_, height := termbox.Size()
 	if editor.cursor.y > height-2 {
 		editor.offsetY++
 	}
 	editor.cursor.returnToTheBeginOfTheLine()
-	editor.setStatus(fmt.Sprintf("Cursor pos %d, buffer length %d", editor.cursor.y, len(editor.buffer)))
+	Writer.Flush()
 	editor.modified = true
 }
 
@@ -211,7 +207,7 @@ func (editor *Editor) deleteChar() {
 			editor.cursor.goToTheEndOfPreviousLine(prevLineLen)
 		}
 	}
-	editor.operations = append(editor.operations, &editorpb.Op{N: -1})
+	// editor.operations = append(editor.operations, &editorpb.Op{N: -1})
 
 	editor.modified = true
 }

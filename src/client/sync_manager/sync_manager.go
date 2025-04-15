@@ -18,22 +18,28 @@ import (
 	_ "google.golang.org/grpc/health"
 )
 
+var Writer = initWriter()
+
+func initWriter() *bufio.Writer {
+	file, err := os.Create("sync_man.log")
+	if err != nil {
+		fmt.Println("Error creating log file:", err)
+		return nil
+	}
+	return bufio.NewWriter(file)
+}
+
 type SyncManager struct {
 	sync.Mutex
 	connection     *grpc.ClientConn
 	node           editorpb.NodeClient
 	DocConfig      DocumentConfig
 	notifyOnUpdate chan<- struct{}
+	buff           ot.Ops
+	wait           ot.Ops
 }
 
 func NewSyncManager(docConfig DocumentConfig) (*SyncManager, <-chan struct{}) {
-	file, err := os.Create("client.log")
-	if err != nil {
-		fmt.Println("Error creating log file:", err)
-		return nil, nil
-	}
-	writer := bufio.NewWriter(file)
-
 	notifyUpdate := make(chan struct{}, 20)
 	syncManager := &SyncManager{
 		DocConfig:      docConfig,
@@ -41,38 +47,64 @@ func NewSyncManager(docConfig DocumentConfig) (*SyncManager, <-chan struct{}) {
 		node:           editorpb.NewNodeClient(initConnection()),
 		notifyOnUpdate: notifyUpdate,
 	}
-	go syncManager.startUpdateListener(writer)
+	go syncManager.startUpdateListener()
 	return syncManager, notifyUpdate
 }
 
-func (syncManager *SyncManager) SendData(operations []*editorpb.Op) {
-	if len(operations) == 0 {
-		return
-	}
-
-	file, err := os.Create("sync.log")
-	if err != nil {
-		fmt.Println("Error creating log file:", err)
-	}
-	writer := bufio.NewWriter(file)
-	fmt.Fprintln(writer, "Docid: "+syncManager.DocConfig.DocId)
-	fmt.Fprintln(writer, "Sending operations:", operations, syncManager.DocConfig.version)
-	writer.Flush()
-
+func (syncManager *SyncManager) ApplyEdit(ops ot.Ops) {
 	syncManager.Lock()
 	defer syncManager.Unlock()
-	errA := syncManager.DocConfig.Document.Apply(ot.NewOps(operations))
-	if errA != nil {
-		fmt.Fprintln(writer, "Error applying operations:", errA)
+	fmt.Fprintln(Writer, "Applying edit %v %s", ops, syncManager.DocConfig.Document)
+	Writer.Flush()
+	var err error
+	if err = syncManager.DocConfig.Document.Apply(ops); err != nil {
+		fmt.Fprintf(Writer, "Error in edit application: %s", err.Error())
+		return
 	}
-	ack, err2 := syncManager.node.Edit(context.Background(), &editorpb.EditReq{DocId: syncManager.DocConfig.DocId, Rev: int32(syncManager.DocConfig.version) /* int32(syncManager.DocConfig.version) */, Ops: operations, UserId: syncManager.DocConfig.authorId, Title: syncManager.DocConfig.title})
-	if err2 != nil {
-		fmt.Fprintln(writer, "Error sending operations:", err2)
+	fmt.Fprintf(Writer, "Edit correctly applied, doc %s\n", string(syncManager.DocConfig.Document))
+	switch {
+	case syncManager.buff != nil:
+		{
+			if syncManager.buff, err = ot.Compose(syncManager.buff, ops); err != nil {
+				fmt.Fprintf(Writer, "Error in edit composition: %s", err.Error())
+			}
+		}
+	case syncManager.wait != nil:
+		{
+			syncManager.buff = ops
+		}
+	default:
+		syncManager.wait = ops
+		go syncManager.Send(ops, syncManager.DocConfig.version)
 	}
-	fmt.Fprintln(writer, "Increasing version due to edit the local file")
+	Writer.Flush()
+}
+
+func (syncManager *SyncManager) Send(ops ot.Ops, rev int) {
+	syncManager.Lock()
+	defer syncManager.Unlock()
+	_, err := syncManager.node.Edit(context.Background(), &editorpb.EditReq{DocId: syncManager.DocConfig.DocId, Rev: int32(rev), Ops: ops.WireFmt(), UserId: syncManager.DocConfig.authorId, Title: syncManager.DocConfig.title})
+	if err != nil {
+		fmt.Fprintln(Writer, "Error sending operations:", err)
+		return
+	}
+	go syncManager.Ack()
+}
+
+func (syncManager *SyncManager) Ack() {
+	syncManager.Lock()
+	defer syncManager.Unlock()
+	switch {
+	case syncManager.buff != nil:
+		go syncManager.Send(syncManager.buff, syncManager.DocConfig.version+1)
+		syncManager.wait, syncManager.buff = syncManager.buff, nil
+	case syncManager.wait != nil:
+		syncManager.wait = nil
+	default:
+		fmt.Fprintln(Writer, "Error sending operations")
+		return
+	}
 	syncManager.DocConfig.version++
-	fmt.Fprintln(writer, "Received ack:", ack)
-	writer.Flush()
 }
 
 func initConnection() *grpc.ClientConn {
@@ -94,70 +126,70 @@ func initConnection() *grpc.ClientConn {
 	return conn
 }
 
-func (syncManager *SyncManager) startUpdateListener(writer *bufio.Writer) {
+func (syncManager *SyncManager) startUpdateListener() {
 	syncManager.Lock()
 	stream, err := syncManager.node.WatchDocument(context.Background())
 	if err != nil {
-		fmt.Fprintln(writer, "Watch error: "+err.Error())
+		fmt.Fprintln(Writer, "Watch error: "+err.Error())
 	}
 	joinDoc := true
 	if syncManager.DocConfig.DocId == "" {
-		syncManager.shareDoc(writer)
+		syncManager.shareDoc(Writer)
 		joinDoc = false
 	}
 	stream.Send(&editorpb.WatchReq{DocId: syncManager.DocConfig.DocId, UserId: syncManager.DocConfig.authorId})
 	docSnapshot, err := stream.Recv()
 	if err != nil {
-		fmt.Fprintln(writer, "Doc snapshot error: "+err.Error())
+		fmt.Fprintln(Writer, "Doc snapshot error: "+err.Error())
 	}
 
 	if joinDoc {
 		syncManager.DocConfig.title = docSnapshot.Title
-		fmt.Fprintf(writer, "File received: ", string(docSnapshot.Doc))
+		fmt.Fprintf(Writer, "File received: ", string(docSnapshot.Doc))
 		syncManager.DocConfig.Document = docSnapshot.Doc
 		syncManager.DocConfig.version = int(docSnapshot.Rev)
-		fmt.Fprintln(writer, "Document snapshot recv", docSnapshot.Rev)
+		fmt.Fprintln(Writer, "Document snapshot recv", docSnapshot.Rev)
 		syncManager.notifyOnUpdate <- struct{}{}
-		writer.Flush()
+		Writer.Flush()
 	}
 	syncManager.Unlock()
 
 	for {
 		updatedData, err := stream.Recv()
-		fmt.Fprintln(writer, "Stream Recv called")
-		writer.Flush()
+		fmt.Fprintln(Writer, "Stream Recv called")
+		Writer.Flush()
 		if err == io.EOF {
-			fmt.Fprintln(writer, "Stream closed")
-			writer.Flush()
+			fmt.Fprintln(Writer, "Stream closed")
+			Writer.Flush()
 			continue
 		}
 		if err != nil {
-			fmt.Fprintf(writer, "Error receiving data: %v", err)
-			writer.Flush()
+			fmt.Fprintf(Writer, "Error receiving data: %v", err)
+			Writer.Flush()
 			continue
 		}
 		syncManager.Lock()
 		err = syncManager.DocConfig.Document.Apply(ot.NewOps(updatedData.Ops))
 		if err != nil {
-			fmt.Fprintln(writer, "Failed to apply received ops")
+			fmt.Fprintln(Writer, "Failed to apply received ops")
 			syncManager.Unlock()
 			return
 		}
-		fmt.Fprintf(writer, "Increasing version due to edit received")
+		fmt.Fprintf(Writer, "Increasing version due to edit received")
 		syncManager.DocConfig.version++
 		syncManager.notifyOnUpdate <- struct{}{}
 		syncManager.Unlock()
-		writer.Flush()
+		Writer.Flush()
 	}
 }
 
-func (syncManager *SyncManager) shareDoc(writer *bufio.Writer) {
-	fmt.Fprintln(writer, "DocId is empty, creating new document...")
+func (syncManager *SyncManager) shareDoc(Writer *bufio.Writer) {
+	fmt.Fprintln(Writer, "DocId is empty, creating new document...")
 	msg, err := syncManager.node.Share(context.Background(), &editorpb.ShareReq{DocName: syncManager.DocConfig.title, Doc: syncManager.DocConfig.Document, UserId: syncManager.DocConfig.authorId})
 	if err != nil {
-		fmt.Fprintln(writer, "Share error "+err.Error())
+		fmt.Fprintln(Writer, "Share error "+err.Error())
 	}
 	syncManager.DocConfig.DocId = msg.DocId
-	fmt.Fprintln(writer, "Document created with ID: "+syncManager.DocConfig.DocId)
-	writer.Flush()
+	fmt.Fprintln(Writer, "Document created with ID: "+syncManager.DocConfig.DocId)
+	Writer.Flush()
 }

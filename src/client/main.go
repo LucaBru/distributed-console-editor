@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 
 	"client/editor"
 
@@ -46,6 +47,10 @@ func main() {
 				}
 			}
 		case <-recvUpdate:
+			{
+				fmt.Fprintf(editor.Writer, "Update from collaborators\n")
+				editor.Writer.Flush()
+			}
 		}
 	}
 }

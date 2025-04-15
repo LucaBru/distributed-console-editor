@@ -1,5 +1,0 @@
-Docid: dff19115-a380-480a-adce-fd34c9161378
-Sending operations: [n:-1]
-Error applying operations: Sum of unchanged and removed char must be equal to the doc length
-Error sending operations: rpc error: code = Unknown desc = Internal error: Revision not in history
-Received ack: <nil>

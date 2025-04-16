@@ -16,6 +16,7 @@ func (doc *Doc) Apply(ops Ops) error {
 	ret, del, ins := ops.Count()
 	i, buf := 0, *doc
 	if ret+del != len(buf) {
+		fmt.Println("Length operation error, %d+%d=%d", ret, del, len(buf))
 		return fmt.Errorf("Sum of unchanged and removed char must be equal to the doc length")
 	}
 	if max := ret + del + ins; max > cap(buf) {

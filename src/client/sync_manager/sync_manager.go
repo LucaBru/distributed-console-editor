@@ -135,60 +135,68 @@ func initConnection() *grpc.ClientConn {
 	return conn
 }
 
-func (syncManager *SyncManager) startUpdateListener() {
-	syncManager.Lock()
-	stream, err := syncManager.node.WatchDocument(context.Background())
+func (m *SyncManager) startUpdateListener() {
+	m.Lock()
+	stream, err := m.node.WatchDocument(context.Background())
 	if err != nil {
 		fmt.Fprintln(Writer, "Watch error: "+err.Error())
 	}
 	joinDoc := true
-	if syncManager.docConfig.DocId == "" {
-		syncManager.shareDoc(Writer)
+	if m.docConfig.DocId == "" {
+		m.shareDoc(Writer)
 		joinDoc = false
 	}
-	stream.Send(&editorpb.WatchReq{DocId: syncManager.docConfig.DocId, UserId: syncManager.docConfig.authorId})
+	stream.Send(&editorpb.WatchReq{DocId: m.docConfig.DocId, UserId: m.docConfig.authorId})
 	docSnapshot, err := stream.Recv()
 	if err != nil {
 		fmt.Fprintln(Writer, "Doc snapshot error: "+err.Error())
 	}
 
 	if joinDoc {
-		syncManager.docConfig.title = docSnapshot.Title
+		m.docConfig.title = docSnapshot.Title
 		fmt.Fprintf(Writer, "File received: ", string(docSnapshot.Doc))
-		syncManager.docConfig.Document = docSnapshot.Doc
-		syncManager.docConfig.version = int(docSnapshot.Rev)
+		m.docConfig.Document = docSnapshot.Doc
+		m.docConfig.version = int(docSnapshot.Rev)
 		fmt.Fprintln(Writer, "Document snapshot recv", docSnapshot.Rev)
-		syncManager.notifyOnUpdate <- struct{}{}
+		m.notifyOnUpdate <- struct{}{}
 		Writer.Flush()
 	}
-	syncManager.Unlock()
+	m.Unlock()
 
+	defer Writer.Flush()
 	for {
-		updatedData, err := stream.Recv()
-		fmt.Fprintln(Writer, "Stream Recv called")
-		Writer.Flush()
+		update, err := stream.Recv()
 		if err == io.EOF {
 			fmt.Fprintln(Writer, "Stream closed")
 			Writer.Flush()
-			continue
+			return
 		}
 		if err != nil {
 			fmt.Fprintf(Writer, "Error receiving data: %v", err)
 			Writer.Flush()
-			continue
-		}
-		syncManager.Lock()
-		err = syncManager.docConfig.Document.Apply(ot.NewOps(updatedData.Ops))
-		if err != nil {
-			fmt.Fprintln(Writer, "Failed to apply received ops")
-			syncManager.Unlock()
 			return
 		}
-		fmt.Fprintf(Writer, "Increasing version due to edit received")
-		syncManager.docConfig.version++
-		syncManager.notifyOnUpdate <- struct{}{}
-		syncManager.Unlock()
-		Writer.Flush()
+		m.Lock()
+		ops := ot.NewOps(update.Ops)
+		if m.wait != nil {
+			if ops, m.wait, err = ot.Transform(ops, m.wait); err != nil {
+				fmt.Fprintf(Writer, "Error traforming collaborators updates: %s\n", err.Error())
+				return
+			}
+		}
+		if m.buf != nil {
+			if ops, m.buf, err = ot.Transform(ops, m.buf); err != nil {
+				fmt.Fprintf(Writer, "Error traforming collaborators updates: %s\n", err.Error())
+				return
+			}
+		}
+		if err = m.docConfig.Document.Apply(ops); err != nil {
+			fmt.Fprintf(Writer, "Error applying collaborators updates: %s\n", err.Error())
+			return
+		}
+		m.docConfig.version++
+		m.notifyOnUpdate <- struct{}{}
+		m.Unlock()
 	}
 }
 

@@ -50,7 +50,6 @@ func (n *Node) Delete(ctx context.Context, req *editorpb.DeleteReq) (*editorpb.D
 }
 
 func (n *Node) Edit(ctx context.Context, req *editorpb.EditReq) (*editorpb.Ack, error) {
-	fmt.Printf("Edit request %o\n", req)
 	log := &rlogpb.Log{Cmd: &rlogpb.Log_Edit{Edit: &rlogpb.Edit{DocId: req.DocId, Rev: req.Rev, Ops: req.Ops, UserId: req.UserId, Title: req.Title}}}
 	err := n.replicateLog(log)
 	if err != nil {
@@ -85,7 +84,6 @@ func (n *Node) WatchDocument(stream editorpb.Node_WatchDocumentServer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Author %s what a doc\n", req.UserId)
 	recvUpdate, doc, title, rev, err := n.state.SubListener(req)
 	if err != nil {
 		return err

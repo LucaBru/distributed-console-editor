@@ -89,11 +89,8 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 	}
 
 	// notify all the collaborators with new ops
-	for name := range d.listeners {
-		fmt.Printf("Notified listener: %d\n", name)
-	}
+
 	for id, ch := range d.listeners {
-		fmt.Printf("Has to be notified: %s == %s, result %b\n", id, authorId, id == authorId)
 		if id != authorId {
 			ch <- Update{Ops: ops, Title: d.title}
 		}

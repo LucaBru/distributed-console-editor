@@ -14,20 +14,20 @@ mkdir /tmp/my-raft-cluster/node{A,B,C}
 
 clear
 
-go run . --raft_bootstrap --raft_id=nodeA --address=localhost:50051 --raft_data_dir /tmp/my-raft-cluster &
-go run . --raft_id=nodeB --address=localhost:50052 --raft_data_dir /tmp/my-raft-cluster &
-go run . --raft_id=nodeC --address=localhost:50053 --raft_data_dir /tmp/my-raft-cluster &
+go run . --raft_bootstrap --raft_id=nodeA --address=https://server1.enricozangrando.com --raft_data_dir /tmp/my-raft-cluster &
+go run . --raft_id=nodeB --address=https://server2.enricozangrando.com --raft_data_dir /tmp/my-raft-cluster &
+go run . --raft_id=nodeC --address=https://server3.enricozangrando.com --raft_data_dir /tmp/my-raft-cluster &
 sleep 2
 
 go install github.com/Jille/raftadmin/cmd/raftadmin@latest
 echo -e "\nAdding nodes B and C to the cluster" 
-raftadmin localhost:50051 add_voter nodeB localhost:50052 0
-raftadmin --leader multi:///localhost:50051,localhost:50052 add_voter nodeC localhost:50053 0
+raftadmin https://server1.enricozangrando.com add_voter nodeB https://server2.enricozangrando.com 0
+raftadmin --leader multi:///https://server1.enricozangrando.com,https://server2.enricozangrando.com add_voter nodeC https://server3.enricozangrando.com 0
 sleep 2
 
 echo -e "\nCluster is online 🚀🚀"
-raftadmin localhost:50051 leader
-raftadmin localhost:50051 get_configuration
+raftadmin https://server1.enricozangrando.com leader
+raftadmin https://server1.enricozangrando.com get_configuration
 
 
 wait

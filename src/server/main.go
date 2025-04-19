@@ -54,9 +54,13 @@ func main() {
 		log.Fatalf("failed to start raft: %v", error)
 	}
 
-	server1Cred, _ := credentials.NewServerTLSFromFile("server1.enricozangrando.com.crt", "https://server1.enricozangrando.com")
-	server2Cred, _ := credentials.NewServerTLSFromFile("server2.enricozangrando.com.crt", "https://server2.enricozangrando.com")
-	server3Cred, _ := credentials.NewServerTLSFromFile("server3.enricozangrando.com.crt", "https://server3.enricozangrando.com")
+	server1Cred, err1 := credentials.NewServerTLSFromFile("server1.enricozangrando.com.crt", "server1.enricozangrando.com.key")
+	server2Cred, _ := credentials.NewServerTLSFromFile("server2.enricozangrando.com.crt", "server2.enricozangrando.com.key")
+	server3Cred, _ := credentials.NewServerTLSFromFile("server3.enricozangrando.com.crt", "server3.enricozangrando.com.key")
+
+	if err1 != nil {
+		log.Fatalf("failed to create server credentials: %v", err1)
+	}
 
 	server := grpc.NewServer(
 		grpc.Creds(server1Cred),

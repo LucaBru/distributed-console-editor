@@ -14,7 +14,7 @@ import (
 	_ "github.com/Jille/grpc-multi-resolver"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	_ "google.golang.org/grpc/health"
 )
 
@@ -122,10 +122,17 @@ func initConnection() *grpc.ClientConn {
 		grpc_retry.WithBackoff(grpc_retry.BackoffLinear(100 * time.Millisecond)),
 		grpc_retry.WithMax(5),
 	}
+
+	server1Cred, _ := credentials.NewClientTLSFromFile("server1.enricozangrando.com.crt", "https://server1.enricozangrando.com")
+	server2Cred, _ := credentials.NewClientTLSFromFile("server2.enricozangrando.com.crt", "https://server2.enricozangrando.com")
+	server3Cred, _ := credentials.NewClientTLSFromFile("server3.enricozangrando.com.crt", "https://server3.enricozangrando.com")
+
 	conn, err := grpc.NewClient(
-		"multi:///localhost:50051,localhost:50052,localhost:50053",
+		"multi:///https://server1.enricozangrando.com,https://server2.enricozangrando.com,https://server3.enricozangrando.com",
 		grpc.WithDefaultServiceConfig(serviceConfig),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(server1Cred),
+		grpc.WithTransportCredentials(server2Cred),
+		grpc.WithTransportCredentials(server3Cred),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 		grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(retryOpts...)),
 	)

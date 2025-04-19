@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/raft"
 	boltDb "github.com/hashicorp/raft-boltdb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 )
@@ -52,7 +53,16 @@ func main() {
 	if error != nil {
 		log.Fatalf("failed to start raft: %v", error)
 	}
-	server := grpc.NewServer()
+
+	server1Cred, _ := credentials.NewServerTLSFromFile("server1.enricozangrando.com.crt", "https://server1.enricozangrando.com")
+	server2Cred, _ := credentials.NewServerTLSFromFile("server2.enricozangrando.com.crt", "https://server2.enricozangrando.com")
+	server3Cred, _ := credentials.NewServerTLSFromFile("server3.enricozangrando.com.crt", "https://server3.enricozangrando.com")
+
+	server := grpc.NewServer(
+		grpc.Creds(server1Cred),
+		grpc.Creds(server2Cred),
+		grpc.Creds(server3Cred),
+	)
 	editorpb.RegisterNodeServer(server, node.NewNode(raft, state))
 	transportManager.Register(server)
 	leaderHealth.Setup(raft, server, []string{"Example"})

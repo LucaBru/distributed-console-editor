@@ -62,10 +62,18 @@ func main() {
 		log.Fatalf("failed to create server credentials: %v", err1)
 	}
 
+	serverCredentials := server1Cred
+
+	if port == "50052" {
+		serverCredentials = server2Cred
+	}
+
+	if port == "50053" {
+		serverCredentials = server3Cred
+	}
+
 	server := grpc.NewServer(
-		grpc.Creds(server1Cred),
-		grpc.Creds(server2Cred),
-		grpc.Creds(server3Cred),
+		grpc.Creds(serverCredentials),
 	)
 	editorpb.RegisterNodeServer(server, node.NewNode(raft, state))
 	transportManager.Register(server)

@@ -15,9 +15,9 @@ mkdir /tmp/my-raft-cluster/node{A,B,C}
 clear
 
 go run . --raft_bootstrap --raft_id=nodeA --address=https://server1.enricozangrando.com --raft_data_dir /tmp/my-raft-cluster &
-sleep 2 &&
+sleep 2
 go run . --raft_id=nodeB --address=https://server2.enricozangrando.com --raft_data_dir /tmp/my-raft-cluster &
-sleep 2 &&
+sleep 2
 go run . --raft_id=nodeC --address=https://server3.enricozangrando.com --raft_data_dir /tmp/my-raft-cluster &
 sleep 2
 

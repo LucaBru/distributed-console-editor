@@ -32,6 +32,10 @@ var (
 func main() {
 	flag.Parse()
 
+	logFile, _ := os.OpenFile("server.log", os.O_RDWR | os.O_CREATE | os.O_TRUNC, 0666)
+	log.SetOutput(logFile)
+	defer logFile.Close()
+
 	if *raftId == "" {
 		log.Fatalf("flag --raft_id is required")
 	}

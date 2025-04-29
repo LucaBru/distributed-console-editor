@@ -7,6 +7,7 @@ import (
 	"editor-service/protos/editorpb"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -14,8 +15,10 @@ import (
 	_ "github.com/Jille/grpc-multi-resolver"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	_ "google.golang.org/grpc/health"
+	"google.golang.org/grpc/status"
 )
 
 var Writer = initWriter()
@@ -136,6 +139,7 @@ func initConnection() *grpc.ClientConn {
 }
 
 func (m *SyncManager) startUpdateListener() {
+	errorCounter := 0
 	m.Lock()
 	stream, err := m.node.WatchDocument(context.Background())
 	if err != nil {
@@ -148,10 +152,10 @@ func (m *SyncManager) startUpdateListener() {
 	}
 	stream.Send(&editorpb.WatchReq{DocId: m.docConfig.DocId, UserId: m.docConfig.authorId})
 	docSnapshot, err := stream.Recv()
+	
 	if err != nil {
 		fmt.Fprintln(Writer, "Doc snapshot error: "+err.Error())
 	}
-
 	if joinDoc {
 		m.docConfig.title = docSnapshot.Title
 		fmt.Fprintf(Writer, "File received: ", string(docSnapshot.Doc))
@@ -165,6 +169,7 @@ func (m *SyncManager) startUpdateListener() {
 
 	defer Writer.Flush()
 	for {
+		fmt.Println("Updating...")
 		update, err := stream.Recv()
 		if err == io.EOF {
 			fmt.Fprintln(Writer, "Stream closed")
@@ -172,6 +177,12 @@ func (m *SyncManager) startUpdateListener() {
 			return
 		}
 		if err != nil {
+			log.Println("Error receiving data: ", err)
+			code := status.Code(err)
+				if code != codes.OK {
+					errorCounter++
+					fmt.Println("Total errors: ", errorCounter)
+				}
 			fmt.Fprintf(Writer, "Error receiving data: %v", err)
 			Writer.Flush()
 			return
@@ -192,6 +203,7 @@ func (m *SyncManager) startUpdateListener() {
 		}
 		if err = m.docConfig.Document.Apply(ops); err != nil {
 			fmt.Fprintf(Writer, "Error applying collaborators updates: %s\n", err.Error())
+			log.Println("Error applying collaborators updates: ", err)
 			return
 		}
 		m.docConfig.version++

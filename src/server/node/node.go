@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
+	logger "log"
 
 	serror "editor-service/errors"
 	"editor-service/protos/editorpb"
@@ -20,12 +22,18 @@ type Node struct {
 	editorpb.UnimplementedNodeServer
 	Raft  *raft.Raft
 	state *State
+	editReceivedTime map[int32]time.Time
+	editReceivedTimeLock sync.Mutex
+	replicationLock sync.Mutex
 }
 
 func NewNode(r *raft.Raft, s *State) *Node {
 	return &Node{
 		Raft:  r,
 		state: s,
+		editReceivedTime: make(map[int32]time.Time),
+		editReceivedTimeLock: sync.Mutex{},
+		replicationLock: sync.Mutex{},
 	}
 }
 
@@ -50,8 +58,14 @@ func (n *Node) Delete(ctx context.Context, req *editorpb.DeleteReq) (*editorpb.D
 }
 
 func (n *Node) Edit(ctx context.Context, req *editorpb.EditReq) (*editorpb.Ack, error) {
+	n.editReceivedTimeLock.Lock()
+	n.editReceivedTime[req.Rev] = time.Now()
+	n.editReceivedTimeLock.Unlock()
+
 	log := &rlogpb.Log{Cmd: &rlogpb.Log_Edit{Edit: &rlogpb.Edit{DocId: req.DocId, Rev: req.Rev, Ops: req.Ops, UserId: req.UserId, Title: req.Title}}}
+	n.replicationLock.Lock()
 	err := n.replicateLog(log)
+	n.replicationLock.Unlock()
 	if err != nil {
 		fmt.Printf("Error in editing %s\n", err.Error())
 		return nil, err
@@ -64,15 +78,24 @@ func (n *Node) replicateLog(log *rlogpb.Log) error {
 	if err != nil {
 		return serror.NewInternalError(err)
 	}
+
 	f := n.Raft.Apply(b, time.Second)
 	if err := f.Error(); err != nil {
 		return rafterrors.MarkRetriable(serror.NewInternalError(err))
 	}
 	reply := f.Response()
+	timeApplied := time.Now()
 	err, ok := reply.(error)
 	if ok {
 		return err
 	}
+
+	timeReceived := n.editReceivedTime[log.GetEdit().GetRev()]
+
+	fmt.Println("Total time for edit  ", log.GetEdit().GetRev(), " is ", timeApplied.Sub(timeReceived))
+	logger.Println(timeApplied.Sub(timeReceived))
+
+
 	return nil
 }
 

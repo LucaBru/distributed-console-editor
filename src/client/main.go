@@ -3,9 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"math/rand"
-	"os"
 	"time"
 
 	"client/editor"
@@ -13,7 +11,10 @@ import (
 	"github.com/nsf/termbox-go"
 )
 
-var docId = flag.String("doc-id", "", "Document ID")
+var (
+	docId = flag.String("doc-id", "", "Document ID")
+	auto  = flag.Bool("auto", false, "Automatic writer")
+)
 
 func main() {
 	/* exporter, err := prometheus.New()
@@ -45,10 +46,6 @@ func main() {
 	// This input mode recognize escape characters
 	termbox.SetInputMode(termbox.InputEsc)
 
-	logFile, _ := os.OpenFile("editor" + string(RandomLetter()) + string(RandomLetter()) + string(RandomLetter()) + string(RandomLetter()) + string(RandomLetter()) + string(RandomLetter()) + string(RandomLetter()) + ".log", os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
-	log.SetOutput(logFile)
-	defer logFile.Close()
-
 	vEditor, recvUpdate := editor.NewEditor(*docId)
 
 	shouldExit := false
@@ -56,18 +53,21 @@ func main() {
 	recvKeyDigit := make(chan *termbox.Event, 20)
 
 	go func() {
-		for !shouldExit {
+		for !shouldExit && *auto {
 			e := termbox.Event{
 				Type: termbox.EventKey,
-				Ch: RandomLetter(),
+				Ch:   RandomLetter(),
 			}
 			recvKeyDigit <- &e
-			time.Sleep(time.Millisecond * time.Duration(RandomWaitTime()))
+			time.Sleep(time.Millisecond * time.Duration(200))
+		}
+		for !shouldExit {
+			e := termbox.PollEvent()
+			recvKeyDigit <- &e
 		}
 	}()
 
 	for !shouldExit {
-		vEditor.Draw()
 		select {
 		case event := <-recvKeyDigit:
 			{
@@ -75,28 +75,26 @@ func main() {
 				case termbox.EventKey:
 					shouldExit = vEditor.OnKeyEvent(*event)
 				}
+				vEditor.Draw()
 			}
-		case <-recvUpdate:
+		case drawed := <-recvUpdate:
 			{
-				fmt.Fprintf(editor.Writer, "Update from collaborators\n")
-				editor.Writer.Flush()
+				vEditor.Draw()
+				fmt.Println("Sendind drawing ack")
+				drawed <- struct{}{}
+				fmt.Println("Update from collaborators")
+				// editor.Writer.Flush()
 			}
 		}
 	}
 }
 
-
 func RandomLetter() rune {
-    if rand.Intn(2) == 0 {
-        // Lowercase letter (a-z: ASCII 97-122)
-        return rune(rand.Intn(26) + 97)
-    } else {
-        // Uppercase letter (A-Z: ASCII 65-90)
-        return rune(rand.Intn(26) + 65)
-    }
-}
-
-func RandomWaitTime() int {
-    // Calculate range: 150-300 ms
-    return rand.Intn(151) + rand.Intn(450)
+	if rand.Intn(2) == 0 {
+		// Lowercase letter (a-z: ASCII 97-122)
+		return rune(rand.Intn(26) + 97)
+	} else {
+		// Uppercase letter (A-Z: ASCII 65-90)
+		return rune(rand.Intn(26) + 65)
+	}
 }

@@ -2,4 +2,10 @@
 settings.json
 .vscode/
 *log
-client
+# client
+*.zip
+*.txt
+main
+src/client/client
+src/client/analysis/main
+src/client/analysis/analysis

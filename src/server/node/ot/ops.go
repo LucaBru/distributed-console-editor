@@ -9,8 +9,9 @@
 package ot
 
 import (
-	pb "editor-service/protos/editorpb"
 	"fmt"
+
+	pb "editor-service/protos/editorpb"
 )
 
 var noop Op
@@ -228,6 +229,8 @@ func Compose(a, b Ops) (ab Ops, err error) {
 		}
 	}
 	ab = Merge(ab)
+	fmt.Printf("Composing %v and %v = %v\n", a, b, ab)
+
 	return
 }
 

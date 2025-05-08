@@ -1,13 +1,14 @@
 package node
 
 import (
+	"fmt"
+	"io"
+	"sync"
+
 	serror "editor-service/errors"
 	"editor-service/node/ot"
 	"editor-service/protos/editorpb"
 	"editor-service/protos/rlogpb"
-	"fmt"
-	"io"
-	"sync"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/raft"
@@ -21,8 +22,12 @@ type State struct {
 
 type DocId = uuid.UUID
 
+var PermanentDocId, _ = uuid.Parse("38a14415-8cb3-4d70-ab9f-e4d1a6463e7f")
+
 func NewState() *State {
-	return &State{docs: make(map[DocId]*ot.SharedDoc)}
+	docs := make(map[DocId]*ot.SharedDoc)
+	docs[PermanentDocId] = ot.NewSharedDoc("Persistent", []byte{}, "OldAuthor")
+	return &State{docs: docs}
 }
 
 func (s *State) shareDoc(l *rlogpb.Share) {

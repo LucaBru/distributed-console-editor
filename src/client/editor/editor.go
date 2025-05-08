@@ -41,7 +41,7 @@ type Editor struct {
 	syncManager           *sync_manager.SyncManager
 }
 
-func NewEditor(docId string) (*Editor, <-chan struct{}) {
+func NewEditor(docId string) (*Editor, <-chan chan struct{}) {
 	authorId := rand.Int()
 	syncManager, recvUpdate := sync_manager.NewSyncManager(sync_manager.NewDocumentConfig(docId, "AuthorN"+fmt.Sprint(authorId), 0, "Testing 1", ot.Doc{}))
 	editor := &Editor{
@@ -57,6 +57,11 @@ func NewEditor(docId string) (*Editor, <-chan struct{}) {
 	// editor.setStatus("Author id: " + fmt.Sprintf("%d", authorId))
 	return editor, recvUpdate
 }
+
+/*
+if the lock is acquired by the remote listener, then I must end up to write the rune (without listening to keyboard events)
+
+*/
 
 // Draw editor content to the terminal
 func (editor *Editor) Draw() {
@@ -76,7 +81,6 @@ func (editor *Editor) Draw() {
 			editor.buffer[lineCounter] += string(updatedDoc[i])
 		}
 	}
-
 	// We clear the current text on the screen
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 	width, height := termbox.Size()
@@ -113,6 +117,7 @@ func (editor *Editor) drawText(width int, height int) {
 func (editor *Editor) drawStatus(width int, height int) {
 	// Now we draw the status line
 	statusLine := fmt.Sprintf(" %s - %d lines %s", editor.syncManager.GetDocId(), len(editor.buffer), map[bool]string{true: "[modified]", false: ""}[editor.modified])
+	// fmt.Println("Debug")
 	if editor.statusMsg != "" {
 		statusLine = editor.statusMsg
 	}
@@ -146,6 +151,7 @@ func (editor *Editor) cursorBounds() (int, int) {
 }
 
 func (editor *Editor) insertRune(char rune) {
+	editor.syncManager.Lock()
 	ops := ot.Ops{}
 	beforeCursor, afterCursor := editor.cursorBounds()
 	ops = append(ops, ot.Op{N: beforeCursor})
@@ -158,14 +164,18 @@ func (editor *Editor) insertRune(char rune) {
 
 	ops = append(ops, ot.Op{N: 0, S: string(char)})
 	ops = append(ops, ot.Op{N: afterCursor})
+	fmt.Printf("insert %c ops: %v, text length %d, doc length %d:\n", char, ops, len(editor.buffer[0]), len(editor.syncManager.GetDoc()))
 	editor.syncManager.ApplyEdit(ops)
+	editor.syncManager.Unlock()
 	editor.scrollRight()
 	editor.modified = true
 }
 
 func (editor *Editor) insertNewline() {
+	editor.syncManager.Lock()
 	beforeCursor, afterCursor := editor.cursorBounds()
 	editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: 0, S: "\n"}, ot.Op{N: afterCursor}})
+	editor.syncManager.Unlock()
 
 	editor.cursor.moveDown()
 	_, height := termbox.Size()
@@ -179,13 +189,17 @@ func (editor *Editor) insertNewline() {
 
 // DeleteChar deletes the character at the current cursor position
 func (editor *Editor) deleteChar() {
+	editor.syncManager.Lock()
 	if editor.cursor.x == 0 && editor.cursor.y == 0 && len(editor.buffer) == 1 && editor.buffer[0] == "" {
+		editor.syncManager.Unlock()
 		return
 	}
 	if editor.cursor.x < len(editor.buffer[editor.cursor.y]) || editor.cursor.x == len(editor.buffer[editor.cursor.y]) && editor.cursor.y < len(editor.buffer) {
 		beforeCursor, afterCursor := editor.cursorBounds()
 		editor.setStatus(fmt.Sprintf("delete char in pos %d", beforeCursor))
+		editor.syncManager.Unlock()
 		editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: -1}, ot.Op{N: afterCursor - 1}})
+		editor.syncManager.Unlock()
 		editor.modified = true
 		return
 	}

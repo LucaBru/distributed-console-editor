@@ -37,7 +37,7 @@ func (d *SharedDoc) Clone() *SharedDoc {
 }
 
 func (d *SharedDoc) AddListener(listenerId string) (<-chan Update, []byte, string, int) {
-	sendUpdate := make(chan Update)
+	sendUpdate := make(chan Update, 10)
 	d.Lock()
 	defer d.Unlock()
 	d.listeners[listenerId] = sendUpdate
@@ -64,6 +64,8 @@ func (d *SharedDoc) Delete() {
 }
 
 func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error {
+	d.Lock()
+	defer d.Unlock()
 	if rev < 0 || len(d.history) < rev {
 		return fmt.Errorf("Revision not in history")
 	}
@@ -75,13 +77,11 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 		}
 	}
 
-	d.Lock()
-	defer d.Unlock()
 	if err = d.doc.Apply(ops); err != nil {
 		fmt.Printf("Failed to apply ops due to %w\n", err)
 		return fmt.Errorf("Operations application failed: %s\n", err.Error())
 	}
-	fmt.Printf(fmt.Sprintf("Shared doc '%s\n'", string(d.doc)))
+	// fmt.Printf(fmt.Sprintf("Shared doc '%s\n'", string(d.doc)))
 	d.history = append(d.history, ops)
 
 	if title != "" && title != d.title {

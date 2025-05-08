@@ -23,6 +23,8 @@ import (
 
 var Writer = initWriter()
 
+var sendStopwatch time.Time
+
 func initWriter() *bufio.Writer {
 	file, err := os.Create("sync_man.log")
 	if err != nil {
@@ -37,40 +39,43 @@ type SyncManager struct {
 	connection     *grpc.ClientConn
 	node           editorpb.NodeClient
 	docConfig      DocumentConfig
-	notifyOnUpdate chan<- struct{}
+	notifyOnUpdate chan<- chan struct{}
 	buf            ot.Ops
 	wait           ot.Ops
 }
 
-func NewSyncManager(docConfig DocumentConfig) (*SyncManager, <-chan struct{}) {
-	notifyUpdate := make(chan struct{}, 20)
+func NewSyncManager(docConfig DocumentConfig) (*SyncManager, <-chan chan struct{}) {
+	notifyUpdate := make(chan chan struct{}, 20)
 	syncManager := &SyncManager{
 		docConfig:      docConfig,
 		connection:     initConnection(),
 		node:           editorpb.NewNodeClient(initConnection()),
 		notifyOnUpdate: notifyUpdate,
 	}
-	go syncManager.startUpdateListener()
+	ready := make(chan struct{})
+	go syncManager.startUpdateListener(ready)
+	<-ready
 	return syncManager, notifyUpdate
 }
 
 func (m *SyncManager) GetDoc() ot.Doc {
-	m.Lock()
-	defer m.Unlock()
+	/* 	m.Lock()
+	   	defer m.Unlock() */
 	return append([]byte{}, m.docConfig.Document...)
 }
 
 func (m *SyncManager) GetDocId() string {
-	m.Lock()
-	defer m.Unlock()
+	/* 	m.Lock()
+	   	defer m.Unlock() */
 	return m.docConfig.DocId
 }
 
 func (syncManager *SyncManager) ApplyEdit(ops ot.Ops) {
-	syncManager.Lock()
-	defer syncManager.Unlock()
+	/* 	syncManager.Lock()
+	   	defer syncManager.Unlock() */
 	var err error
 	if err = syncManager.docConfig.Document.Apply(ops); err != nil {
+		fmt.Println("Error while editing local file")
 		fmt.Fprintf(Writer, "Error in edit application: %s", err.Error())
 		return
 	}
@@ -87,15 +92,16 @@ func (syncManager *SyncManager) ApplyEdit(ops ot.Ops) {
 		}
 	default:
 		syncManager.wait = ops
-		go syncManager.Send(ops, syncManager.docConfig.version)
+		req := &editorpb.EditReq{DocId: syncManager.docConfig.DocId, Rev: int32(syncManager.docConfig.version), Ops: ops.WireFmt(), UserId: syncManager.docConfig.authorId, Title: syncManager.docConfig.title}
+		go syncManager.Send(req)
 	}
 	Writer.Flush()
 }
 
-func (syncManager *SyncManager) Send(ops ot.Ops, rev int) {
-	syncManager.Lock()
-	defer syncManager.Unlock()
-	_, err := syncManager.node.Edit(context.Background(), &editorpb.EditReq{DocId: syncManager.docConfig.DocId, Rev: int32(rev), Ops: ops.WireFmt(), UserId: syncManager.docConfig.authorId, Title: syncManager.docConfig.title})
+func (syncManager *SyncManager) Send(req *editorpb.EditReq) {
+	fmt.Println("Sending edit req to the cluster")
+	sendStopwatch = time.Now()
+	_, err := syncManager.node.Edit(context.Background(), req)
 	if err != nil {
 		fmt.Fprintln(Writer, "Error sending operations:", err)
 		return
@@ -104,15 +110,21 @@ func (syncManager *SyncManager) Send(ops ot.Ops, rev int) {
 }
 
 func (syncManager *SyncManager) Ack() {
+	elapsed := time.Since(sendStopwatch)
 	syncManager.Lock()
 	defer syncManager.Unlock()
 	switch {
 	case syncManager.buf != nil:
-		go syncManager.Send(syncManager.buf, syncManager.docConfig.version+1)
+		fmt.Printf("Analysis: %d\n", elapsed.Milliseconds())
+		ops := append(ot.Ops{}, syncManager.buf...)
+		req := &editorpb.EditReq{DocId: syncManager.docConfig.DocId, Rev: int32(syncManager.docConfig.version + 1), Ops: ops.WireFmt(), UserId: syncManager.docConfig.authorId, Title: syncManager.docConfig.title}
+		go syncManager.Send(req)
 		syncManager.wait, syncManager.buf = syncManager.buf, nil
 	case syncManager.wait != nil:
+		fmt.Printf("Analysis: %d\n", elapsed.Milliseconds())
 		syncManager.wait = nil
 	default:
+		fmt.Println("Analysis: bad request")
 		fmt.Fprintln(Writer, "Error sending operations")
 		return
 	}
@@ -138,7 +150,7 @@ func initConnection() *grpc.ClientConn {
 	return conn
 }
 
-func (m *SyncManager) startUpdateListener() {
+func (m *SyncManager) startUpdateListener(ready chan struct{}) {
 	errorCounter := 0
 	m.Lock()
 	stream, err := m.node.WatchDocument(context.Background())
@@ -152,7 +164,6 @@ func (m *SyncManager) startUpdateListener() {
 	}
 	stream.Send(&editorpb.WatchReq{DocId: m.docConfig.DocId, UserId: m.docConfig.authorId})
 	docSnapshot, err := stream.Recv()
-	
 	if err != nil {
 		fmt.Fprintln(Writer, "Doc snapshot error: "+err.Error())
 	}
@@ -161,16 +172,18 @@ func (m *SyncManager) startUpdateListener() {
 		fmt.Fprintf(Writer, "File received: ", string(docSnapshot.Doc))
 		m.docConfig.Document = docSnapshot.Doc
 		m.docConfig.version = int(docSnapshot.Rev)
-		fmt.Fprintln(Writer, "Document snapshot recv", docSnapshot.Rev)
-		m.notifyOnUpdate <- struct{}{}
-		Writer.Flush()
+		fmt.Println("Document snapshot received")
+		drawed := make(chan struct{})
+		m.notifyOnUpdate <- drawed
+		ready <- struct{}{}
+		<-drawed
 	}
 	m.Unlock()
 
 	defer Writer.Flush()
 	for {
-		fmt.Println("Updating...")
 		update, err := stream.Recv()
+		fmt.Println("Updating...")
 		if err == io.EOF {
 			fmt.Fprintln(Writer, "Stream closed")
 			Writer.Flush()
@@ -179,35 +192,38 @@ func (m *SyncManager) startUpdateListener() {
 		if err != nil {
 			log.Println("Error receiving data: ", err)
 			code := status.Code(err)
-				if code != codes.OK {
-					errorCounter++
-					fmt.Println("Total errors: ", errorCounter)
-				}
+			if code != codes.OK {
+				errorCounter++
+				fmt.Println("Total errors: ", errorCounter)
+			}
 			fmt.Fprintf(Writer, "Error receiving data: %v", err)
 			Writer.Flush()
 			return
 		}
 		m.Lock()
 		ops := ot.NewOps(update.Ops)
+		log.Printf("Remote edit: %v, wait: %v, buffer: %v, local doc length: %d, doc: %s\n", ops, m.wait, m.buf, len(m.docConfig.Document), string(m.docConfig.Document))
 		if m.wait != nil {
 			if ops, m.wait, err = ot.Transform(ops, m.wait); err != nil {
-				fmt.Fprintf(Writer, "Error traforming collaborators updates: %s\n", err.Error())
+				fmt.Printf("Error trasforming collaborators updates: %s\n", err.Error())
 				return
 			}
 		}
 		if m.buf != nil {
 			if ops, m.buf, err = ot.Transform(ops, m.buf); err != nil {
-				fmt.Fprintf(Writer, "Error traforming collaborators updates: %s\n", err.Error())
+				fmt.Printf("Error trasforming collaborators updates: %s\n", err.Error())
 				return
 			}
 		}
 		if err = m.docConfig.Document.Apply(ops); err != nil {
-			fmt.Fprintf(Writer, "Error applying collaborators updates: %s\n", err.Error())
+			fmt.Printf("Error applying collaborators updates: %s\n", err.Error())
 			log.Println("Error applying collaborators updates: ", err)
 			return
 		}
 		m.docConfig.version++
-		m.notifyOnUpdate <- struct{}{}
+		drawed := make(chan struct{})
+		m.notifyOnUpdate <- drawed
+		<-drawed
 		m.Unlock()
 	}
 }

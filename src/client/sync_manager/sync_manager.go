@@ -106,6 +106,7 @@ func (syncManager *SyncManager) Send(req *editorpb.EditReq) {
 		fmt.Fprintln(Writer, "Error sending operations:", err)
 		return
 	}
+	fmt.Println("Successful edit in ", time.Since(sendStopwatch))
 	go syncManager.Ack()
 }
 

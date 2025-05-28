@@ -19,7 +19,6 @@ go run . --raft_id=nodeB --address=localhost:50052 --raft_data_dir /tmp/my-raft-
 go run . --raft_id=nodeC --address=localhost:50053 --raft_data_dir /tmp/my-raft-cluster &
 go run . --raft_id=nodeD --address=localhost:50054 --raft_data_dir /tmp/my-raft-cluster &
 go run . --raft_id=nodeE --address=localhost:50055 --raft_data_dir /tmp/my-raft-cluster &
-
 sleep 2
 
 go install github.com/Jille/raftadmin/cmd/raftadmin@latest

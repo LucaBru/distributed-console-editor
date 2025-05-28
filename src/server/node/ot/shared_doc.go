@@ -2,6 +2,7 @@ package ot
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"editor-service/protos/editorpb"
@@ -48,7 +49,7 @@ func (d *SharedDoc) DeleteListener(listenerId string) error {
 	d.Lock()
 	defer d.Unlock()
 	if d.listeners[listenerId] == nil {
-		return fmt.Errorf("Listener id not found")
+		return fmt.Errorf("listener id not found")
 	}
 	close(d.listeners[listenerId])
 	delete(d.listeners, listenerId)
@@ -67,20 +68,20 @@ func (d *SharedDoc) Edit(rev int, ops Ops, authorId string, title string) error 
 	d.Lock()
 	defer d.Unlock()
 	if rev < 0 || len(d.history) < rev {
-		return fmt.Errorf("Revision not in history")
+		return fmt.Errorf("revision not in history")
 	}
 
 	var err error
 	for _, other := range d.history[rev:] {
 		if ops, _, err = Transform(ops, other); err != nil {
-			return fmt.Errorf("Operations transformation failed: %w", err)
+			return fmt.Errorf("operations transformation failed: %w", err)
 		}
 	}
 
 	if err = d.doc.Apply(ops); err != nil {
-		fmt.Printf("Failed to apply ops due to %w\n", err)
-		return fmt.Errorf("Operations application failed: %s\n", err.Error())
+		return fmt.Errorf("operations application failed: %s", err.Error())
 	}
+	log.Printf("%s edit doc: %s", authorId, string(d.doc))
 	// fmt.Printf(fmt.Sprintf("Shared doc '%s\n'", string(d.doc)))
 	d.history = append(d.history, ops)
 

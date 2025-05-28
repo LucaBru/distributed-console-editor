@@ -1,319 +1,204 @@
 package editor
 
 import (
-	"bufio"
+	"context"
 	"editor-service/node/ot"
+	"editor-service/protos/editorpb"
 	"fmt"
-	"math/rand"
-	"os"
-	"strings"
+	"io"
+	"log"
+	"sync"
+	"time"
 
-	"client/sync_manager"
-
-	// "log"
-
+	_ "github.com/Jille/grpc-multi-resolver"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"github.com/nsf/termbox-go"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	_ "google.golang.org/grpc/health"
 )
 
-var Writer = initWriter()
-
-func initWriter() *bufio.Writer {
-	file, err := os.Create("editor.log")
-	if err != nil {
-		fmt.Println("Error creating log file:", err)
-		return nil
-	}
-	return bufio.NewWriter(file)
-}
-
 type Editor struct {
-	buffer                []string // These are the lines of text
-	cursor                Cursor
-	offsetX               int    // Scroll on X axis
-	offsetY               int    // Scroll on Y axis
-	filename              string // File where text will be saved
-	modified              bool
-	statusMsg             string
-	backgroundColor       termbox.Attribute
-	foregroundColor       termbox.Attribute
-	statusBackgroundColor termbox.Attribute
-	statusForegroundColor termbox.Attribute
-	syncManager           *sync_manager.SyncManager
+	sync.Mutex
+	doc   *ot.Doc // the document
+	docId string
+	Rev   int    // last acknowledged revision
+	Wait  ot.Ops // pending ops or nil
+	Buf   ot.Ops // buffered ops or nil
+	// Send is called when a new revision can be sent to the server.
+	Send      func(int, ot.Ops)
+	observers []chan<- ot.Doc
 }
 
-func NewEditor(docId string) (*Editor, <-chan chan struct{}) {
-	authorId := rand.Int()
-	syncManager, recvUpdate := sync_manager.NewSyncManager(sync_manager.NewDocumentConfig(docId, "AuthorN"+fmt.Sprint(authorId), 0, "Testing 1", ot.Doc{}))
-	editor := &Editor{
-		buffer:                []string{""},
-		backgroundColor:       termbox.ColorDefault,
-		foregroundColor:       termbox.ColorDefault,
-		statusBackgroundColor: termbox.ColorBlack,
-		statusForegroundColor: termbox.ColorWhite,
-		filename:              "untitled.txt",
-		cursor:                *newCursor(),
-		syncManager:           syncManager,
+func NewEditor(docId string, authorId string) *Editor {
+	cEditor := Editor{
+		doc:   &ot.Doc{},
+		docId: docId,
 	}
-	// editor.setStatus("Author id: " + fmt.Sprintf("%d", authorId))
-	return editor, recvUpdate
-}
-
-/*
-if the lock is acquired by the remote listener, then I must end up to write the rune (without listening to keyboard events)
-
-*/
-
-// Draw editor content to the terminal
-func (editor *Editor) Draw() {
-	// TODO: get a copy, not the document (pay attention to the use of syncManager (lock needed))
-	updatedDoc := editor.syncManager.GetDoc()
-	lineCounter := 0
-	editor.buffer = []string{""}
-	fmt.Fprintf(Writer, "ot document %v\n", updatedDoc)
-	Writer.Flush()
-	for i, digit := range updatedDoc {
-		if digit == 0x0A {
-			fmt.Fprintf(Writer, "Encountered new line while redrawing\n")
-			Writer.Flush()
-			editor.buffer = append(editor.buffer, "")
-			lineCounter++
-		} else {
-			editor.buffer[lineCounter] += string(updatedDoc[i])
+	node := editorpb.NewNodeClient(initConn())
+	send := func(rev int, ops ot.Ops) {
+		stopWatch := make(chan time.Time, 1)
+		stopWatch <- time.Now()
+		log.Print("send edit to cluster")
+		req := &editorpb.EditReq{DocId: docId, Rev: int32(rev), Ops: ops.WireFmt(), UserId: authorId, Title: "random"}
+		_, err := node.Edit(context.Background(), req)
+		log.Print("cluster answers to doc edit")
+		if err != nil {
+			log.Fatal("failed to edit remote document: ", err)
+			return
 		}
+		log.Print("successful edit")
+		cEditor.Ack(stopWatch)
 	}
-	// We clear the current text on the screen
-	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
-	width, height := termbox.Size()
-
-	editor.drawText(width, height)
-	editor.drawStatus(width, height)
-
-	termbox.SetCursor(editor.cursor.x-editor.offsetX, editor.cursor.y-editor.offsetY)
-	termbox.Flush()
+	cEditor.Send = send
+	wait := make(chan struct{})
+	go cEditor.Recv(node, authorId, wait)
+	<-wait
+	log.Print("returned")
+	return &cEditor
 }
 
-func (editor *Editor) drawText(width int, height int) {
-	for y := 0; y < height-1; y++ {
-		lineY := y + editor.offsetY
-		if lineY >= len(editor.buffer) {
-			// In this case we are trying to display a line that is not in the buffer
-			break
-		}
-
-		lineContent := editor.buffer[lineY]
-		if editor.offsetX < len(lineContent) {
-			// We display only the part of the string after the horizontal offset
-			displayLine := lineContent[editor.offsetX:]
-			for x, char := range []rune(displayLine) {
-				if x >= width {
-					break
-				}
-				termbox.SetCell(x, y, char, editor.backgroundColor, editor.foregroundColor)
-			}
-		}
+func initConn() *grpc.ClientConn {
+	serviceConfig := `{"healthCheckConfig": {"serviceName": "Example"}, "loadBalancingConfig": [ { "round_robin": {} } ]}`
+	retryOpts := []grpc_retry.CallOption{
+		grpc_retry.WithBackoff(grpc_retry.BackoffLinear(100 * time.Millisecond)),
+		grpc_retry.WithMax(5),
 	}
-}
-
-func (editor *Editor) drawStatus(width int, height int) {
-	// Now we draw the status line
-	statusLine := fmt.Sprintf(" %s - %d lines %s", editor.syncManager.GetDocId(), len(editor.buffer), map[bool]string{true: "[modified]", false: ""}[editor.modified])
-	// fmt.Println("Debug")
-	if editor.statusMsg != "" {
-		statusLine = editor.statusMsg
-	}
-
-	// We fill the status line with spaces
-	for x := 0; x < width; x++ {
-		termbox.SetCell(x, height-1, ' ', editor.statusBackgroundColor, editor.statusForegroundColor)
-	}
-
-	// Draw the status
-	for x, char := range []rune(statusLine) {
-		if x >= width {
-			break
-		}
-		termbox.SetCell(x, height-1, char, editor.statusBackgroundColor, editor.statusForegroundColor)
-	}
-}
-
-func (editor *Editor) cursorBounds() (int, int) {
-	prev := 0
-	next := len(editor.buffer[editor.cursor.y]) - editor.cursor.x
-	for _, line := range editor.buffer[:editor.cursor.y] {
-		prev += len(line) + 1
-	}
-	prev += editor.cursor.x
-
-	for _, line := range editor.buffer[editor.cursor.y+1:] {
-		next += len(line) + 1
-	}
-	return prev, next
-}
-
-func (editor *Editor) insertRune(char rune) {
-	editor.syncManager.Lock()
-	ops := ot.Ops{}
-	beforeCursor, afterCursor := editor.cursorBounds()
-	ops = append(ops, ot.Op{N: beforeCursor})
-
-	line := []rune(editor.buffer[editor.cursor.y])
-	for i := 0; i < editor.cursor.x-len(line); i++ {
-		line = append(line, ' ')
-		ops = append(ops, ot.Op{N: 0, S: " "})
-	}
-
-	ops = append(ops, ot.Op{N: 0, S: string(char)})
-	ops = append(ops, ot.Op{N: afterCursor})
-	fmt.Printf("insert %c ops: %v, text length %d, doc length %d:\n", char, ops, len(editor.buffer[0]), len(editor.syncManager.GetDoc()))
-	editor.syncManager.ApplyEdit(ops)
-	editor.syncManager.Unlock()
-	editor.scrollRight()
-	editor.modified = true
-}
-
-func (editor *Editor) insertNewline() {
-	editor.syncManager.Lock()
-	beforeCursor, afterCursor := editor.cursorBounds()
-	editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: 0, S: "\n"}, ot.Op{N: afterCursor}})
-	editor.syncManager.Unlock()
-
-	editor.cursor.moveDown()
-	_, height := termbox.Size()
-	if editor.cursor.y > height-2 {
-		editor.offsetY++
-	}
-	editor.cursor.returnToTheBeginOfTheLine()
-	Writer.Flush()
-	editor.modified = true
-}
-
-// DeleteChar deletes the character at the current cursor position
-func (editor *Editor) deleteChar() {
-	editor.syncManager.Lock()
-	if editor.cursor.x == 0 && editor.cursor.y == 0 && len(editor.buffer) == 1 && editor.buffer[0] == "" {
-		editor.syncManager.Unlock()
-		return
-	}
-	if editor.cursor.x < len(editor.buffer[editor.cursor.y]) || editor.cursor.x == len(editor.buffer[editor.cursor.y]) && editor.cursor.y < len(editor.buffer) {
-		beforeCursor, afterCursor := editor.cursorBounds()
-		editor.setStatus(fmt.Sprintf("delete char in pos %d", beforeCursor))
-		editor.syncManager.Unlock()
-		editor.syncManager.ApplyEdit(ot.Ops{ot.Op{N: beforeCursor}, ot.Op{N: -1}, ot.Op{N: afterCursor - 1}})
-		editor.syncManager.Unlock()
-		editor.modified = true
-		return
-	}
-	fmt.Fprintln(Writer, "Try to delete an empty char")
-	Writer.Flush()
-}
-
-// SaveFile saves the current buffer to a file
-func (editor *Editor) saveFile() {
-	content := strings.Join(editor.buffer, "\n")
-	file, file_err := os.Create(editor.filename)
-	if file_err != nil {
-		editor.setStatus("Error opening file: " + file_err.Error())
-		return
-	}
-	err := os.WriteFile(file.Name(), []byte(content), 0o644)
+	conn, err := grpc.NewClient(
+		"multi:///localhost:50051,localhost:50052,localhost:50053",
+		grpc.WithDefaultServiceConfig(serviceConfig),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
+		grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(retryOpts...)),
+	)
 	if err != nil {
-		editor.setStatus("Error saving file: " + err.Error())
-	} else {
-		editor.modified = false
-		editor.setStatus(fmt.Sprintf("Saved %s (%d bytes)", editor.filename, len(content)))
+		fmt.Errorf("Failed to connect: %v", err)
+	}
+	return conn
+}
+
+func (c *Editor) Observe() <-chan ot.Doc {
+	c.Lock()
+	defer c.Unlock()
+	ch := make(chan ot.Doc)
+	c.observers = append(c.observers, ch)
+	return ch
+}
+
+func (c *Editor) notifyObservers() {
+	c.Lock()
+	defer c.Unlock()
+	for _, obs := range c.observers {
+		obs <- *c.doc
 	}
 }
 
-func (editor *Editor) scrollRight() {
-	_, width := termbox.Size()
-	if editor.offsetX > 0 || editor.cursor.x >= width {
-		editor.cursor.moveRight()
-		editor.offsetX++
-		return
+func (c *Editor) apply(ops ot.Ops) error {
+	log.Print("apply edit to local doc")
+	var err error
+	if err = c.doc.Apply(ops); err != nil {
+		return err
 	}
-	editor.cursor.moveRight()
-}
-
-func (editor *Editor) scrollLeft() {
-	if editor.cursor.x == 0 && editor.cursor.y == 0 {
-		return
-	}
-	if editor.cursor.x == 0 {
-		editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y-1]))
-		editor.cursor.x++
-	}
-	if editor.offsetX > 0 {
-		editor.cursor.moveLeft()
-		editor.offsetX--
-		return
-	}
-	editor.cursor.moveLeft()
-}
-
-func (editor *Editor) scrollUp() {
-	if editor.cursor.y == 0 {
-		return
-	}
-	if editor.offsetY > 0 && editor.cursor.y > 0 {
-		editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y-1]))
-		editor.offsetY--
-		return
-	}
-	editor.cursor.goToTheEndOfPreviousLine(len(editor.buffer[editor.cursor.y-1]))
-}
-
-func (editor *Editor) scrollDown() {
-	if editor.cursor.y+1 == len(editor.buffer) {
-		return
-	}
-	_, height := termbox.Size()
-	if editor.cursor.y > height {
-		editor.cursor.goToTheEndOfNextLine(len(editor.buffer[editor.cursor.y+1]))
-		editor.offsetY++
-		return
-	}
-	editor.cursor.goToTheEndOfNextLine(len(editor.buffer[editor.cursor.y+1]))
-}
-
-// SetStatus sets a temporary status message
-func (e *Editor) setStatus(msg string) {
-	e.statusMsg = msg
-}
-
-// Callback to handle key events obtained from termbox.
-// Returns true if editor should be closed
-func (editor *Editor) OnKeyEvent(event termbox.Event) bool {
-	switch event.Key {
-	case termbox.KeyCtrlQ:
-		// We should exit
-		return true
-	case termbox.KeyCtrlS:
-		editor.saveFile()
-	case termbox.KeyArrowUp:
-		editor.scrollUp()
-	case termbox.KeyArrowDown:
-		editor.scrollDown()
-	case termbox.KeyArrowRight:
-		editor.scrollRight()
-	case termbox.KeyArrowLeft:
-		editor.scrollLeft()
-	case termbox.KeyEnter:
-		editor.insertNewline()
-	case termbox.KeyDelete:
-		editor.deleteChar()
-	case termbox.KeyBackspace2:
-		{
-			if editor.cursor.x == 0 && editor.cursor.y == 0 {
-				break
-			}
-			editor.scrollLeft()
-			editor.deleteChar()
+	go c.notifyObservers()
+	switch {
+	case c.Buf != nil:
+		if c.Buf, err = ot.Compose(c.Buf, ops); err != nil {
+			return err
 		}
-	case termbox.KeySpace:
-		editor.insertRune(' ')
+	case c.Wait != nil:
+		c.Buf = ops
 	default:
-		editor.insertRune(event.Ch)
+		c.Wait = ops
+		rev := c.Rev
+		go c.Send(rev, ops)
 	}
+	return nil
+}
 
-	return false
+// Ack acknowledges a pending server update and sends buffered updates if any.
+// An error is returned if no update is pending.
+func (c *Editor) Ack(stopWatch <-chan time.Time) {
+	log.Print("ack")
+	c.Lock()
+	defer c.Unlock()
+	switch {
+	case c.Buf != nil:
+		go c.Send(c.Rev+1, c.Buf)
+		c.Wait, c.Buf = c.Buf, nil
+	case c.Wait != nil:
+		c.Wait = nil
+	default:
+		log.Fatal("no pending operation")
+	}
+	c.Rev++
+	log.Print("successful ack")
+	log.Print("edited remote document in ", time.Since(<-stopWatch))
+}
+
+// Recv receives server updates originating from other participants.
+// An error is returned if the server update could not be applied.
+func (c *Editor) Recv(node editorpb.NodeClient, author string, wait chan<- struct{}) {
+	var err error
+	stream, err := node.WatchDocument(context.Background())
+	if err != nil {
+		log.Fatal("failed to watch remote document: ", err)
+	}
+	stream.Send(&editorpb.WatchReq{DocId: c.docId, UserId: author})
+	snap, err := stream.Recv()
+	log.Print("snapshot received")
+	if err != nil {
+		log.Fatal("failed to get document snapshot: ", err)
+	}
+	c.doc = (*ot.Doc)(&snap.Doc)
+	c.Rev = int(snap.Rev)
+	close(wait)
+
+	for {
+		edit, err := stream.Recv()
+		log.Println("received remote update")
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			log.Fatal("failed to receive a remote edit: ", err)
+		}
+		ops := ot.NewOps(edit.Ops)
+
+		c.Lock()
+		if c.Wait != nil {
+			if ops, c.Wait, err = ot.Transform(ops, c.Wait); err != nil {
+				log.Fatal(err)
+			}
+		}
+		if c.Buf != nil {
+			if ops, c.Buf, err = ot.Transform(ops, c.Buf); err != nil {
+				log.Fatal(err)
+			}
+		}
+		if err = c.doc.Apply(ops); err != nil {
+			log.Fatal(err)
+		}
+		c.Rev++
+		c.Unlock()
+		for _, obs := range c.observers {
+			obs <- *c.doc
+		}
+	}
+}
+
+func (e *Editor) Edit(event termbox.Event) {
+	e.Lock()
+	defer e.Unlock()
+	switch event.Key {
+	default:
+		{
+			// insert rune always at pos 0 for the moment
+			ops := ot.Ops{ot.Op{S: string(event.Ch)}, ot.Op{N: int(len(*e.doc))}}
+			err := e.apply(ops)
+			if err != nil {
+				log.Fatal("local edit failed: ", err)
+			}
+			log.Print("successful local edit")
+		}
+	}
 }

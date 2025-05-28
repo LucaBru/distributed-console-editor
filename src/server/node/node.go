@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
+	logMsg "log"
 	"sync"
 	"time"
-	logger "log"
 
 	serror "editor-service/errors"
 	"editor-service/protos/editorpb"
@@ -20,20 +21,20 @@ import (
 
 type Node struct {
 	editorpb.UnimplementedNodeServer
-	Raft  *raft.Raft
-	state *State
-	editReceivedTime map[int32]time.Time
+	Raft                 *raft.Raft
+	state                *State
+	editReceivedTime     map[int32]time.Time
 	editReceivedTimeLock sync.Mutex
-	replicationLock sync.Mutex
+	replicationLock      sync.Mutex
 }
 
 func NewNode(r *raft.Raft, s *State) *Node {
 	return &Node{
-		Raft:  r,
-		state: s,
-		editReceivedTime: make(map[int32]time.Time),
+		Raft:                 r,
+		state:                s,
+		editReceivedTime:     make(map[int32]time.Time),
 		editReceivedTimeLock: sync.Mutex{},
-		replicationLock: sync.Mutex{},
+		replicationLock:      sync.Mutex{},
 	}
 }
 
@@ -67,7 +68,6 @@ func (n *Node) Edit(ctx context.Context, req *editorpb.EditReq) (*editorpb.Ack, 
 	err := n.replicateLog(log)
 	n.replicationLock.Unlock()
 	if err != nil {
-		fmt.Printf("Error in editing %s\n", err.Error())
 		return nil, err
 	}
 	return &editorpb.Ack{}, nil
@@ -84,23 +84,18 @@ func (n *Node) replicateLog(log *rlogpb.Log) error {
 		return rafterrors.MarkRetriable(serror.NewInternalError(err))
 	}
 	reply := f.Response()
-	timeApplied := time.Now()
 	err, ok := reply.(error)
 	if ok {
+		logMsg.Print("failed to apply the log to the state: ", err)
 		return err
 	}
-
-	timeReceived := n.editReceivedTime[log.GetEdit().GetRev()]
-
-	fmt.Println("Total time for edit  ", log.GetEdit().GetRev(), " is ", timeApplied.Sub(timeReceived))
-	logger.Println(timeApplied.Sub(timeReceived))
-
 
 	return nil
 }
 
 func (n *Node) WatchDocument(stream editorpb.Node_WatchDocumentServer) error {
 	req, err := stream.Recv()
+	log.Print("watch document request from ", req.UserId)
 	if err == io.EOF {
 		return nil
 	}
@@ -109,6 +104,7 @@ func (n *Node) WatchDocument(stream editorpb.Node_WatchDocumentServer) error {
 	}
 	recvUpdate, doc, title, rev, err := n.state.SubListener(req)
 	if err != nil {
+		log.Fatal("failed to subscribe listener: ", err)
 		return err
 	}
 	stream.Send(&editorpb.Update{Doc: doc, Rev: int32(rev), Title: title})

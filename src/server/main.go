@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
-	"editor-service/node"
-	"editor-service/protos/editorpb"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
+
+	"editor-service/node"
+	"editor-service/protos/editorpb"
 
 	leaderHealth "github.com/Jille/raft-grpc-leader-rpc/leaderhealth"
 	transport "github.com/Jille/raft-grpc-transport"
@@ -29,13 +30,17 @@ var (
 	raftBootstrap = flag.Bool("raft_bootstrap", false, "Whether to bootstrap the Raft cluster")
 )
 
-func main() {
+func init() {
 	flag.Parse()
-
-	logFile, _ := os.OpenFile("server.log", os.O_RDWR | os.O_CREATE | os.O_TRUNC, 0666)
+	logFile, err := os.OpenFile(*myAddr+".log", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		log.Println("Unable to create Logger file:", err.Error())
+		return
+	}
 	log.SetOutput(logFile)
-	defer logFile.Close()
+}
 
+func main() {
 	if *raftId == "" {
 		log.Fatalf("flag --raft_id is required")
 	}

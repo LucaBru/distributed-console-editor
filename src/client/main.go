@@ -2,8 +2,10 @@ package main
 
 import (
 	"flag"
-	"fmt"
+	"log"
 	"math/rand"
+	"os"
+	"sync"
 	"time"
 
 	"client/editor"
@@ -12,89 +14,51 @@ import (
 )
 
 var (
-	docId = flag.String("doc-id", "", "Document ID")
-	auto  = flag.Bool("auto", false, "Automatic writer")
+	docId    = flag.String("doc-id", "", "Document ID")
+	authorId = flag.String("author", "", "Author ID")
 )
 
-func main() {
-	/* exporter, err := prometheus.New()
-	if err != nil {
-		fmt.Println("Error creating metrics exporter:", err)
-	}
-	meterProvider := otelmetric.NewMeterProvider(otelmetric.WithReader(exporter))
-	traceExporter, err := otelstdouttrace.New(otelstdouttrace.WithPrettyPrint())
-	if err != nil {
-		fmt.Println("Error creating trace exporter:", err)
-	}
-	traceProvider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(traceExporter), sdktrace.WithResource(otelresource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceName("grpc-client"))))
-	textMapPropagator := otelpropagation.TraceContext{}
-	dialOptions := opentelemetry.DialOption(opentelemetry.Options{
-		MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: meterProvider},
-		TraceOptions:   oteltracing.TraceOptions{TracerProvider: traceProvider, TextMapPropagator: textMapPropagator},
-	})
-
-	go http.ListenAndServe("127.0.0.1:12345", promhttp.Handler()) */
-
+func init() {
 	flag.Parse()
+	logFile, err := os.OpenFile("analysis/logs/"+*authorId+".log", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		log.Println("Unable to create Logger file:", err.Error())
+		return
+	}
+	log.SetOutput(logFile)
+}
 
+func main() {
+	log.Println("start the program")
 	err := termbox.Init()
 	if err != nil {
 		panic("Termbox init failed")
 	}
 	defer termbox.Close()
-
-	// This input mode recognize escape characters
 	termbox.SetInputMode(termbox.InputEsc)
+	screen := editor.NewScreen()
+	editor := editor.NewEditor(*docId, *authorId)
+	go screen.DrawRemoteEdit(editor.Observe())
 
-	vEditor, recvUpdate := editor.NewEditor(*docId)
-
-	shouldExit := false
-
-	recvKeyDigit := make(chan *termbox.Event, 20)
-
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
-		for !shouldExit && *auto {
-			e := termbox.Event{
-				Type: termbox.EventKey,
-				Ch:   RandomLetter(),
+		timer := time.NewTimer(50 * time.Second)
+		editTicker := time.NewTicker(1 * time.Second)
+		for {
+			select {
+			case <-timer.C:
+				return
+			case <-editTicker.C:
+				{
+					log.Print("edit sent")
+					editor.Edit(termbox.Event{
+						Type: termbox.EventKey,
+						Ch:   rune(rand.Intn(26) + 97),
+					})
+				}
 			}
-			recvKeyDigit <- &e
-			time.Sleep(time.Millisecond * time.Duration(200))
-		}
-		for !shouldExit {
-			e := termbox.PollEvent()
-			recvKeyDigit <- &e
 		}
 	}()
-
-	for !shouldExit {
-		select {
-		case event := <-recvKeyDigit:
-			{
-				switch event.Type {
-				case termbox.EventKey:
-					shouldExit = vEditor.OnKeyEvent(*event)
-				}
-				vEditor.Draw()
-			}
-		case drawed := <-recvUpdate:
-			{
-				vEditor.Draw()
-				fmt.Println("Sendind drawing ack")
-				drawed <- struct{}{}
-				fmt.Println("Update from collaborators")
-				// editor.Writer.Flush()
-			}
-		}
-	}
-}
-
-func RandomLetter() rune {
-	if rand.Intn(2) == 0 {
-		// Lowercase letter (a-z: ASCII 97-122)
-		return rune(rand.Intn(26) + 97)
-	} else {
-		// Uppercase letter (A-Z: ASCII 65-90)
-		return rune(rand.Intn(26) + 65)
-	}
+	wg.Wait()
 }

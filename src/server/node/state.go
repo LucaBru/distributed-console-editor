@@ -96,8 +96,11 @@ func (s *State) SubListener(req *editorpb.WatchReq) (<-chan ot.Update, []byte, s
 	uid, err := uuid.Parse(req.DocId)
 	s.RLock()
 	defer s.RUnlock()
-	if err != nil || s.docs[uid] == nil {
+	if err != nil {
 		return nil, nil, "", 0, serror.NewInvalidReqError(err)
+	}
+	if s.docs[uid] == nil {
+		return nil, nil, "", 0, fmt.Errorf("document not found")
 	}
 	recvUpdate, docContent, title, rev := s.docs[uid].AddListener(req.UserId)
 	return recvUpdate, docContent, title, rev, nil
